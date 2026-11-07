@@ -160,6 +160,13 @@ public:
   }
   int getMinPointPerVoxel() const { return target_cells_.getMinPointPerVoxel(); }
 
+  /** \brief Use the covariance formula of Autoware's copy of the voxel grid, see VoxelGridCovariance. Default false. */
+  void setUseAutowareCovariance(bool use) {
+    target_cells_.setUseAutowareCovariance(use);
+    if (target_) init();
+  }
+  bool getUseAutowareCovariance() const { return target_cells_.getUseAutowareCovariance(); }
+
   void setNeighborhoodSearchMethod(NeighborSearchMethod method) { search_method = method; }
 
   /** \brief Accepts pclomp::NeighborSearchMethod (or any enum with the same values) for drop-in compatibility. */

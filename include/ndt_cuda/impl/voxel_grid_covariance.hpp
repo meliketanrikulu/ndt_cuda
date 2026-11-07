@@ -130,8 +130,12 @@ bool ndt_cuda::VoxelGridCovariance<PointT>::build(const pcl::PointCloud<PointT>&
     }
 
     // Single pass covariance calculation
-    leaf.cov = (leaf.cov - 2 * (pt_sum * leaf.mean.transpose())) / leaf.nr_points + leaf.mean * leaf.mean.transpose();
-    leaf.cov *= (leaf.nr_points - 1.0) / leaf.nr_points;
+    if (use_autoware_covariance_) {
+      leaf.cov = (leaf.cov - pt_sum * leaf.mean.transpose()) / (leaf.nr_points - 1);
+    } else {
+      leaf.cov = (leaf.cov - 2 * (pt_sum * leaf.mean.transpose())) / leaf.nr_points + leaf.mean * leaf.mean.transpose();
+      leaf.cov *= (leaf.nr_points - 1.0) / leaf.nr_points;
+    }
 
     eigensolver.compute(leaf.cov);
     Eigen::Matrix3d eigen_val = eigensolver.eigenvalues().asDiagonal();

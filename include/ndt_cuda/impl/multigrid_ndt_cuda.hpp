@@ -72,6 +72,7 @@ void ndt_cuda::MultiGridNormalDistributionsTransformCUDA<PointSource, PointTarge
   TargetGrid grid;
   grid.setLeafSize(resolution_);
   grid.setMinPointPerVoxel(target_cells_.getMinPointPerVoxel());
+  grid.setUseAutowareCovariance(target_cells_.getUseAutowareCovariance());
   grid.build(*cloud);
 
   VoxelGridHost exported;

@@ -80,6 +80,13 @@ public:
   void setMinCovarEigvalueMult(double mult) { min_covar_eigvalue_mult_ = mult; }
   double getMinCovarEigvalueMult() const { return min_covar_eigvalue_mult_; }
 
+  /** \brief Use the covariance formula of Autoware's copy of the voxel grid (default false: the formula of ndt_omp).
+   * Autoware divides the scatter matrix by n - 1. ndt_omp multiplies it by (n - 1) / n^2, which gives smaller covariances
+   * and so lower scores. Both add a small multiple of the identity to it.
+   */
+  void setUseAutowareCovariance(bool use) { use_autoware_covariance_ = use; }
+  bool getUseAutowareCovariance() const { return use_autoware_covariance_; }
+
   /** \brief Builds the grid from a cloud.
    * \return false if the cloud is empty or the leaf size is too small for the extent of the cloud (the grid is then empty).
    */
@@ -100,6 +107,7 @@ private:
   float leaf_size_ = 1.0f;
   int min_points_per_voxel_ = 6;
   double min_covar_eigvalue_mult_ = 0.01;
+  bool use_autoware_covariance_ = false;
 
   Eigen::Vector3i min_b_ = Eigen::Vector3i::Zero();
   Eigen::Vector3i max_b_ = Eigen::Vector3i::Zero();

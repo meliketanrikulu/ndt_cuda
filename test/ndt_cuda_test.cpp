@@ -535,6 +535,34 @@ static void testTargetHandling(const Cloud::Ptr& target, const Cloud::Ptr& sourc
   resolution_before.setInputTarget(target);
   check(resolution_after.getNumTargetVoxels() == resolution_before.getNumTargetVoxels(), "setResolution() after setInputTarget() rebuilds the grid", double(resolution_after.getNumTargetVoxels()) - double(resolution_before.getNumTargetVoxels()), 0.0);
 
+  // The covariance formula of Autoware: scatter matrix and identity divided by n - 1.
+  {
+    Cloud::Ptr voxel_points(new Cloud);
+    std::mt19937 rng_cov(3);
+    std::uniform_real_distribution<float> in_voxel(0.1f, 0.9f);
+    Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d moment = Eigen::Matrix3d::Zero();
+    const int n = 20;
+    for (int i = 0; i < n; i++) {
+      PointT pt;
+      pt.x = in_voxel(rng_cov);
+      pt.y = in_voxel(rng_cov);
+      pt.z = in_voxel(rng_cov);
+      voxel_points->push_back(pt);
+      const Eigen::Vector3d p(pt.x, pt.y, pt.z);
+      sum += p;
+      moment += p * p.transpose();
+    }
+    const Eigen::Vector3d mean = sum / n;
+    const Eigen::Matrix3d expected_cov = (moment - n * mean * mean.transpose() + Eigen::Matrix3d::Identity()) / (n - 1);
+    ndt_cuda::VoxelGridCovariance<PointT> autoware_cells;
+    autoware_cells.setLeafSize(1.0f);
+    autoware_cells.setUseAutowareCovariance(true);
+    autoware_cells.build(*voxel_points);
+    const double cov_error = (autoware_cells.getLeaves().begin()->second.icov - expected_cov.inverse()).cwiseAbs().maxCoeff();
+    check(autoware_cells.getLeaves().size() == 1 && cov_error < 1e-9, "Autoware covariance formula", cov_error, 1e-9);
+  }
+
   // A failed upload must not leave the old map in use.
   ndt_cuda::VoxelGridCovariance<PointT> cells;
   cells.setLeafSize(1.0f);
