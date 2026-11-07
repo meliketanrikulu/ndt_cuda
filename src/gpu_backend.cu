@@ -137,6 +137,25 @@ __global__ void __launch_bounds__(kBlockSize) scoreKernel(const float4* __restri
   blockReduceToPartials<kNumScoreValues>(acc, partials);
 }
 
+template <int MODE>
+__global__ void __launch_bounds__(kBlockSize) probabilityKernel(const float4* __restrict__ points, int num_points, GridView grid, KernelParams p, double* __restrict__ partials) {
+  float acc[kNumProbabilityValues] = {0.0f, 0.0f, 0.0f};
+
+  for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < num_points; idx += blockDim.x * gridDim.x) {
+    accumulateProbability<MODE>(grid, p, __ldg(points + idx), acc);
+  }
+
+  blockReduceToPartials<kNumProbabilityValues>(acc, partials);
+}
+
+template <int MODE>
+__global__ void __launch_bounds__(kBlockSize) nearestScoreKernel(const float4* __restrict__ points, int num_points, GridView grid, KernelParams p, float* __restrict__ scores) {
+  for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < num_points; idx += blockDim.x * gridDim.x) {
+    float sum, nearest;
+    scores[idx] = pointProbability<MODE>(grid, p, __ldg(points + idx), sum, nearest) ? nearest : -1.0f;
+  }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Host helpers
 // ---------------------------------------------------------------------------------------------
@@ -244,6 +263,7 @@ struct GpuBackend::Impl {
 
   // scratch
   DeviceBuffer<float4> score_points;
+  DeviceBuffer<float> nearest_scores;
   DeviceBuffer<double> partials;
   DeviceBuffer<double> results;
   PinnedBuffer<double> host_results;
@@ -263,6 +283,19 @@ struct GpuBackend::Impl {
     NDT_CUDA_CHECK(cudaMemcpyAsync(dst.get(), host_staging.get(), n * sizeof(float4), cudaMemcpyHostToDevice, stream));
     // host_staging is reused by the next upload, so the copy must be finished before returning.
     NDT_CUDA_CHECK(cudaStreamSynchronize(stream));
+  }
+
+  /** \brief Parameters of an evaluation of an already transformed cloud. */
+  KernelParams scoreParams(double gauss_d1, double gauss_d2, double gauss_d3, float radius) const {
+    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    KernelParams p;
+    std::memset(&p, 0, sizeof(p));
+    setTransform(p, identity, origin);
+    p.gauss_d1 = static_cast<float>(gauss_d1);
+    p.gauss_d2 = static_cast<float>(gauss_d2);
+    p.gauss_d3 = static_cast<float>(gauss_d3);
+    p.radius2 = radius * radius;
+    return p;
   }
 
   void finishReduction(int num_blocks, int num_values) {
@@ -342,7 +375,8 @@ void GpuBackend::setTarget(const VoxelGridHost& grid) {
 
   std::vector<int32_t> slot_keys;
   std::vector<uint32_t> slot_values;
-  const std::size_t capacity = buildHashTable(grid.keys, grid.flags, slot_keys, slot_values);
+  bool unique_keys = true;
+  const std::size_t capacity = buildHashTable(grid.keys, grid.flags, slot_keys, slot_values, unique_keys);
 
   m.slot_keys.reserve(capacity);
   m.slot_values.reserve(capacity);
@@ -359,6 +393,7 @@ void GpuBackend::setTarget(const VoxelGridHost& grid) {
   m.grid.slot_values = m.slot_values.get();
   m.grid.voxels = m.voxels.get();
   m.grid.slot_mask = static_cast<uint32_t>(capacity - 1);
+  m.grid.unique_keys = unique_keys;
   m.num_voxels = n;
   m.has_target = true;
 }
@@ -437,6 +472,9 @@ DerivativeResult GpuBackend::computeDerivatives(const DerivativeParams& params) 
       result.hessian[j * 6 + i] = r[h];
     }
   }
+  result.nearest_voxel_score = r[28];
+  result.points_with_neighbors = r[29];
+  result.num_neighbors = r[30];
   return result;
 }
 
@@ -452,14 +490,7 @@ double GpuBackend::calculateScore(const float* xyzw, std::size_t num_points, dou
 
   m.upload(m.score_points, xyzw, num_points);
 
-  const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  KernelParams p;
-  std::memset(&p, 0, sizeof(p));
-  setTransform(p, identity, m.origin);
-  p.gauss_d1 = static_cast<float>(gauss_d1);
-  p.gauss_d2 = static_cast<float>(gauss_d2);
-  p.gauss_d3 = static_cast<float>(gauss_d3);
-  p.radius2 = radius * radius;
+  const KernelParams p = m.scoreParams(gauss_d1, gauss_d2, gauss_d3, radius);
 
   const int n = static_cast<int>(num_points);
   const int num_blocks = numBlocksFor(n);
@@ -484,6 +515,87 @@ double GpuBackend::calculateScore(const float* xyzw, std::size_t num_points, dou
 
   m.finishReduction(num_blocks, kNumScoreValues);
   return m.host_results.get()[0] / static_cast<double>(num_points);
+}
+
+ProbabilityResult GpuBackend::calculateProbability(const float* xyzw, std::size_t num_points, double gauss_d1, double gauss_d2, float radius, int search_method) {
+  DeviceGuard guard(impl_->device);
+  Impl& m = *impl_;
+  ProbabilityResult result = {0.0, 0.0, 0.0};
+  if (!m.has_target || m.num_voxels == 0 || num_points == 0) {
+    return result;
+  }
+  if (num_points > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument("[ndt_cuda] too many points");
+  }
+
+  m.upload(m.score_points, xyzw, num_points);
+  const KernelParams p = m.scoreParams(gauss_d1, gauss_d2, 0.0, radius);
+
+  const int n = static_cast<int>(num_points);
+  const int num_blocks = numBlocksFor(n);
+  m.ensureScratch(num_blocks, kNumProbabilityValues);
+
+  switch (search_method) {
+    case KDTREE:
+      probabilityKernel<kModeKdtree><<<num_blocks, kBlockSize, 0, m.stream>>>(m.score_points.get(), n, m.grid, p, m.partials.get());
+      break;
+    case DIRECT26:
+      probabilityKernel<kModeDirect26><<<num_blocks, kBlockSize, 0, m.stream>>>(m.score_points.get(), n, m.grid, p, m.partials.get());
+      break;
+    case DIRECT1:
+      probabilityKernel<kModeDirect1><<<num_blocks, kBlockSize, 0, m.stream>>>(m.score_points.get(), n, m.grid, p, m.partials.get());
+      break;
+    case DIRECT7:
+    default:
+      probabilityKernel<kModeDirect7><<<num_blocks, kBlockSize, 0, m.stream>>>(m.score_points.get(), n, m.grid, p, m.partials.get());
+      break;
+  }
+  NDT_CUDA_CHECK(cudaGetLastError());
+
+  m.finishReduction(num_blocks, kNumProbabilityValues);
+  const double* r = m.host_results.get();
+  result.score = r[0];
+  result.nearest_voxel_score = r[1];
+  result.points_with_neighbors = r[2];
+  return result;
+}
+
+void GpuBackend::calculateNearestVoxelScores(const float* xyzw, std::size_t num_points, double gauss_d1, double gauss_d2, float radius, int search_method, float* scores) {
+  DeviceGuard guard(impl_->device);
+  Impl& m = *impl_;
+  if (!m.has_target || m.num_voxels == 0 || num_points == 0) {
+    std::fill(scores, scores + num_points, -1.0f);
+    return;
+  }
+  if (num_points > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument("[ndt_cuda] too many points");
+  }
+
+  m.upload(m.score_points, xyzw, num_points);
+  m.nearest_scores.reserve(num_points);
+  const KernelParams p = m.scoreParams(gauss_d1, gauss_d2, 0.0, radius);
+
+  const int n = static_cast<int>(num_points);
+  const int num_blocks = numBlocksFor(n);
+
+  switch (search_method) {
+    case KDTREE:
+      nearestScoreKernel<kModeKdtree><<<num_blocks, kBlockSize, 0, m.stream>>>(m.score_points.get(), n, m.grid, p, m.nearest_scores.get());
+      break;
+    case DIRECT26:
+      nearestScoreKernel<kModeDirect26><<<num_blocks, kBlockSize, 0, m.stream>>>(m.score_points.get(), n, m.grid, p, m.nearest_scores.get());
+      break;
+    case DIRECT1:
+      nearestScoreKernel<kModeDirect1><<<num_blocks, kBlockSize, 0, m.stream>>>(m.score_points.get(), n, m.grid, p, m.nearest_scores.get());
+      break;
+    case DIRECT7:
+    default:
+      nearestScoreKernel<kModeDirect7><<<num_blocks, kBlockSize, 0, m.stream>>>(m.score_points.get(), n, m.grid, p, m.nearest_scores.get());
+      break;
+  }
+  NDT_CUDA_CHECK(cudaGetLastError());
+  NDT_CUDA_CHECK(cudaMemcpyAsync(scores, m.nearest_scores.get(), num_points * sizeof(float), cudaMemcpyDeviceToHost, m.stream));
+  NDT_CUDA_CHECK(cudaStreamSynchronize(m.stream));
 }
 
 int GpuBackend::deviceCount() {

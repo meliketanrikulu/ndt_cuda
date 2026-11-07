@@ -10,7 +10,7 @@
 //   2. gradient and hessian against central finite differences on a synthetic grid,
 //   3. end-to-end align() results against ndt_omp, including large map coordinates,
 //   4. drop-in compatibility (pcl::Registration interface, pclomp_compat.hpp),
-//   5. target handling (empty and invalid targets, getFitnessScore(), optional kd-tree, not copyable).
+//   5. target handling (empty and invalid targets, getFitnessScore(), optional kd-tree, copies).
 //
 // usage: ndt_cuda_test [data_dir]
 
@@ -21,7 +21,6 @@
 #include <random>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 #include <pcl/common/transforms.h>
@@ -443,7 +442,6 @@ static void testCompat(const Cloud::Ptr& target, const Cloud::Ptr& source) {
 static void testTargetHandling(const Cloud::Ptr& target, const Cloud::Ptr& source) {
   std::printf("\n[5] target handling\n");
   using NDT = ndt_cuda::NormalDistributionsTransformCUDA<PointT, PointT>;
-  static_assert(!std::is_copy_constructible_v<NDT> && !std::is_copy_assignable_v<NDT>, "an instance owns its GPU state");
 
   // pcl::Registration rejects an empty cloud; this must not crash and align() must report the failure.
   NDT empty;
@@ -505,6 +503,19 @@ static void testTargetHandling(const Cloud::Ptr& target, const Cloud::Ptr& sourc
   nan_target.align(out);
   const float nan_diff = (clean.getFinalTransformation() - nan_target.getFinalTransformation()).cwiseAbs().maxCoeff();
   check(nan_target.hasConverged() && nan_diff == 0.0f, "NaN points in a dense target: same result as without them", nan_diff, 0.0);
+
+  // A copy has its own GPU state and gets the map on its own.
+  NDT copied(clean);
+  copied.setInputSource(source);
+  copied.align(out);
+  const float copy_diff = (clean.getFinalTransformation() - copied.getFinalTransformation()).cwiseAbs().maxCoeff();
+  check(copied.hasConverged() && copy_diff == 0.0f, "copy: same result as the original", copy_diff, 0.0);
+  NDT assigned;
+  assigned = clean;
+  assigned.setInputSource(source);
+  assigned.align(out);
+  const float assign_diff = (clean.getFinalTransformation() - assigned.getFinalTransformation()).cwiseAbs().maxCoeff();
+  check(assigned.hasConverged() && assign_diff == 0.0f, "assignment: same result as the original", assign_diff, 0.0);
 
   // A target without usable voxels must not be reported as a successful alignment.
   Cloud::Ptr only_nan(new Cloud);

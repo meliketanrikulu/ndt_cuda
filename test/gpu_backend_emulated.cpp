@@ -50,6 +50,36 @@ struct GpuBackend::Impl {
     }
     return sum;
   }
+
+  template <int MODE>
+  void probability(const KernelParams& p, const std::vector<float4>& points, double out[kNumProbabilityValues]) const {
+    for (int k = 0; k < kNumProbabilityValues; k++) out[k] = 0.0;
+    for (const float4& pt : points) {
+      float acc[kNumProbabilityValues] = {0.0f};
+      accumulateProbability<MODE>(grid, p, pt, acc);
+      for (int k = 0; k < kNumProbabilityValues; k++) out[k] += acc[k];
+    }
+  }
+
+  template <int MODE>
+  void nearestScores(const KernelParams& p, const std::vector<float4>& points, float* scores) const {
+    for (std::size_t i = 0; i < points.size(); i++) {
+      float sum, nearest;
+      scores[i] = pointProbability<MODE>(grid, p, points[i], sum, nearest) ? nearest : -1.0f;
+    }
+  }
+
+  KernelParams scoreParams(double gauss_d1, double gauss_d2, double gauss_d3, float radius) const {
+    const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    KernelParams p;
+    std::memset(&p, 0, sizeof(p));
+    setTransform(p, identity, origin);
+    p.gauss_d1 = static_cast<float>(gauss_d1);
+    p.gauss_d2 = static_cast<float>(gauss_d2);
+    p.gauss_d3 = static_cast<float>(gauss_d3);
+    p.radius2 = radius * radius;
+    return p;
+  }
 };
 
 GpuBackend::GpuBackend(int) : impl_(new Impl) {}
@@ -88,11 +118,13 @@ void GpuBackend::setTarget(const VoxelGridHost& g) {
     m.voxels[i].b = make_float4(float(ic[1]), float(ic[2]), float(ic[3]), float(ic[4]));
     m.voxels[i].c = make_float4(float(ic[5]), 0.0f, 0.0f, 0.0f);
   }
-  const std::size_t capacity = buildHashTable(g.keys, g.flags, m.slot_keys, m.slot_values);
+  bool unique_keys = true;
+  const std::size_t capacity = buildHashTable(g.keys, g.flags, m.slot_keys, m.slot_values, unique_keys);
   m.grid.slot_keys = m.slot_keys.data();
   m.grid.slot_values = m.slot_values.data();
   m.grid.voxels = m.voxels.data();
   m.grid.slot_mask = static_cast<uint32_t>(capacity - 1);
+  m.grid.unique_keys = unique_keys;
   m.has_target = true;
 }
 
@@ -142,6 +174,9 @@ DerivativeResult GpuBackend::computeDerivatives(const DerivativeParams& params) 
       result.hessian[j * 6 + i] = r[k];
     }
   }
+  result.nearest_voxel_score = r[28];
+  result.points_with_neighbors = r[29];
+  result.num_neighbors = r[30];
   return result;
 }
 
@@ -151,14 +186,7 @@ double GpuBackend::calculateScore(const float* xyzw, std::size_t num_points, dou
   std::vector<float4> points(num_points);
   std::memcpy(points.data(), xyzw, num_points * sizeof(float4));
 
-  const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  KernelParams p;
-  std::memset(&p, 0, sizeof(p));
-  setTransform(p, identity, m.origin);
-  p.gauss_d1 = static_cast<float>(gauss_d1);
-  p.gauss_d2 = static_cast<float>(gauss_d2);
-  p.gauss_d3 = static_cast<float>(gauss_d3);
-  p.radius2 = radius * radius;
+  const KernelParams p = m.scoreParams(gauss_d1, gauss_d2, gauss_d3, radius);
 
   double sum;
   switch (search_method) {
@@ -176,6 +204,61 @@ double GpuBackend::calculateScore(const float* xyzw, std::size_t num_points, dou
       break;
   }
   return sum / static_cast<double>(num_points);
+}
+
+ProbabilityResult GpuBackend::calculateProbability(const float* xyzw, std::size_t num_points, double gauss_d1, double gauss_d2, float radius, int search_method) {
+  Impl& m = *impl_;
+  ProbabilityResult result = {0.0, 0.0, 0.0};
+  if (!m.has_target || m.voxels.empty() || num_points == 0) return result;
+  std::vector<float4> points(num_points);
+  std::memcpy(points.data(), xyzw, num_points * sizeof(float4));
+  const KernelParams p = m.scoreParams(gauss_d1, gauss_d2, 0.0, radius);
+
+  double r[kNumProbabilityValues];
+  switch (search_method) {
+    case KDTREE:
+      m.probability<kModeKdtree>(p, points, r);
+      break;
+    case DIRECT26:
+      m.probability<kModeDirect26>(p, points, r);
+      break;
+    case DIRECT1:
+      m.probability<kModeDirect1>(p, points, r);
+      break;
+    default:
+      m.probability<kModeDirect7>(p, points, r);
+      break;
+  }
+  result.score = r[0];
+  result.nearest_voxel_score = r[1];
+  result.points_with_neighbors = r[2];
+  return result;
+}
+
+void GpuBackend::calculateNearestVoxelScores(const float* xyzw, std::size_t num_points, double gauss_d1, double gauss_d2, float radius, int search_method, float* scores) {
+  Impl& m = *impl_;
+  if (!m.has_target || m.voxels.empty() || num_points == 0) {
+    for (std::size_t i = 0; i < num_points; i++) scores[i] = -1.0f;
+    return;
+  }
+  std::vector<float4> points(num_points);
+  std::memcpy(points.data(), xyzw, num_points * sizeof(float4));
+  const KernelParams p = m.scoreParams(gauss_d1, gauss_d2, 0.0, radius);
+
+  switch (search_method) {
+    case KDTREE:
+      m.nearestScores<kModeKdtree>(p, points, scores);
+      break;
+    case DIRECT26:
+      m.nearestScores<kModeDirect26>(p, points, scores);
+      break;
+    case DIRECT1:
+      m.nearestScores<kModeDirect1>(p, points, scores);
+      break;
+    default:
+      m.nearestScores<kModeDirect7>(p, points, scores);
+      break;
+  }
 }
 
 int GpuBackend::deviceCount() {

@@ -70,6 +70,22 @@ struct DerivativeResult {
   double score;
   double gradient[6];
   double hessian[36];
+  /** \brief Sum over the points of the score of their best voxel. */
+  double nearest_voxel_score;
+  /** \brief Number of points with at least one neighbor voxel. */
+  double points_with_neighbors;
+  /** \brief Number of point / neighbor voxel pairs. */
+  double num_neighbors;
+};
+
+/** \brief Scores of a cloud, without the normalization of DerivativeResult. */
+struct ProbabilityResult {
+  /** \brief Sum of the scores of all point / neighbor voxel pairs. */
+  double score;
+  /** \brief Sum over the points of the score of their best voxel. */
+  double nearest_voxel_score;
+  /** \brief Number of points with at least one neighbor voxel. */
+  double points_with_neighbors;
 };
 
 /** \brief Owns the GPU state: voxel hash table, source points, scratch buffers and a CUDA stream.
@@ -99,6 +115,12 @@ public:
 
   /** \brief Mean negative log likelihood of an already transformed cloud (packed x, y, z, unused). */
   double calculateScore(const float* xyzw, std::size_t num_points, double gauss_d1, double gauss_d2, double gauss_d3, float radius, int search_method);
+
+  /** \brief Scores of an already transformed cloud (packed x, y, z, unused). */
+  ProbabilityResult calculateProbability(const float* xyzw, std::size_t num_points, double gauss_d1, double gauss_d2, float radius, int search_method);
+
+  /** \brief Score of the best voxel of each point of an already transformed cloud; -1 for a point without neighbor voxels. */
+  void calculateNearestVoxelScores(const float* xyzw, std::size_t num_points, double gauss_d1, double gauss_d2, float radius, int search_method, float* scores);
 
   /** \brief Device ordinal used by this backend. */
   int device() const;

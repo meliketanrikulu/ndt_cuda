@@ -79,11 +79,14 @@ inline float4 make_float4(float x, float y, float z, float w) {
 namespace ndt_cuda {
 namespace kernels {
 
-// score, gradient (6), upper triangle of the hessian (21)
-constexpr int kNumDerivativeValues = 28;
+// score, gradient (6), upper triangle of the hessian (21), nearest voxel score, points with neighbors, neighbors
+constexpr int kNumDerivativeValues = 31;
 constexpr int kNumScoreValues = 1;
+// sum of the voxel scores, nearest voxel score, points with neighbors
+constexpr int kNumProbabilityValues = 3;
 
 constexpr int32_t kEmptySlot = -1;
+constexpr uint32_t kProbeDone = 0xFFFFFFFFu;
 constexpr uint32_t kIndexMask = 0x3FFFFFFFu;
 constexpr int kFlagShift = 30;
 
@@ -157,6 +160,7 @@ struct GridView {
   const uint32_t* slot_values;  // voxel index | flags << 30
   const DeviceVoxel* voxels;
   uint32_t slot_mask;
+  bool unique_keys;  // false if map tiles put several voxels in one cell
   int min_b[3];
   int max_b[3];
   int divb_mul[3];
@@ -181,19 +185,27 @@ NDT_HD uint32_t hashKey(int32_t key) {
   return static_cast<uint32_t>(key) * 2654435761u;
 }
 
-NDT_HD int lookupVoxel(const GridView& grid, int32_t key, uint32_t required_flag) {
-  uint32_t slot = hashKey(key) & grid.slot_mask;
-  while (true) {
+NDT_HD uint32_t firstSlot(const GridView& grid, int32_t key) {
+  return hashKey(key) & grid.slot_mask;
+}
+
+/** \brief Next voxel of a cell with the required flag, or -1. Start with slot = firstSlot(). */
+NDT_HD int nextVoxel(const GridView& grid, int32_t key, uint32_t required_flag, uint32_t& slot) {
+  while (slot != kProbeDone) {
     const int32_t k = NDT_LDG(grid.slot_keys + slot);
-    if (k == key) {
-      const uint32_t v = NDT_LDG(grid.slot_values + slot);
-      return ((v >> kFlagShift) & required_flag) ? static_cast<int>(v & kIndexMask) : -1;
-    }
     if (k == kEmptySlot) {
+      slot = kProbeDone;
       return -1;
     }
+    const uint32_t current = slot;
     slot = (slot + 1) & grid.slot_mask;
+    if (k == key) {
+      if (grid.unique_keys) slot = kProbeDone;
+      const uint32_t v = NDT_LDG(grid.slot_values + current);
+      if ((v >> kFlagShift) & required_flag) return static_cast<int>(v & kIndexMask);
+    }
   }
+  return -1;
 }
 
 /** \brief Linear leaf index of cell (ijk + offset n), or false if it lies outside the grid
@@ -257,7 +269,8 @@ NDT_HD bool transformAndLocate(const GridView& grid, const KernelParams& p, cons
 }
 
 /** \brief Adds the score, gradient and (if HESSIAN) hessian contributions of one source point to acc.
- *  acc layout: [0] score, [1..6] gradient, [7..27] hessian upper triangle (row-major, i <= j). */
+ *  acc layout: [0] score, [1..6] gradient, [7..27] hessian upper triangle (row-major, i <= j),
+ *  [28] nearest voxel score, [29] 1 if the point has neighbors, [30] number of neighbors. */
 template <int MODE, bool HESSIAN>
 NDT_HD void accumulateDerivatives(const GridView& grid, const KernelParams& p, const float4 src, float acc[kNumDerivativeValues]) {
   float x_trans[3];
@@ -294,85 +307,98 @@ NDT_HD void accumulateDerivatives(const GridView& grid, const KernelParams& p, c
     ph[5][0] = x_h_ang[12], ph[5][1] = x_h_ang[13], ph[5][2] = x_h_ang[14];  // f
   }
 
+  float nearest_score = 0.0f;
+  int num_neighbors = 0;
+
   for (int n = NeighborRange<MODE>::begin; n < NeighborRange<MODE>::end; n++) {
     int32_t key;
     if (!cellKey(grid, ijk, n, key)) {
       continue;
     }
-    const int v = lookupVoxel(grid, key, NeighborRange<MODE>::flag);
-    if (v < 0) {
-      continue;
-    }
+    uint32_t slot = firstSlot(grid, key);
+    int v;
+    while ((v = nextVoxel(grid, key, NeighborRange<MODE>::flag, slot)) >= 0) {
+      float mean[3], c[6];
+      loadVoxel(grid, v, mean, c);
 
-    float mean[3], c[6];
-    loadVoxel(grid, v, mean, c);
+      // Denorm point, x_k' in Equations 6.12 and 6.13 [Magnusson 2009]
+      const float xt[3] = {x_trans[0] - mean[0], x_trans[1] - mean[1], x_trans[2] - mean[2]};
 
-    // Denorm point, x_k' in Equations 6.12 and 6.13 [Magnusson 2009]
-    const float xt[3] = {x_trans[0] - mean[0], x_trans[1] - mean[1], x_trans[2] - mean[2]};
+      if (MODE == kModeKdtree) {
+        if (dot3(xt, xt) >= p.radius2) {
+          continue;
+        }
+      }
+      num_neighbors++;
 
-    if (MODE == kModeKdtree) {
-      if (dot3(xt, xt) >= p.radius2) {
+      float cx[3];
+      symMul(c, xt, cx);
+
+      // e^(-d_2/2 * (x_k - mu_k)^T Sigma_k^-1 (x_k - mu_k)) Equation 6.9 [Magnusson 2009]
+      float e_x_cov_x = expf(-d2 * dot3(xt, cx) * 0.5f);
+      // Probability of transformed points existence, Equation 6.9 [Magnusson 2009]
+      const float score_inc = -d1 * e_x_cov_x;
+
+      e_x_cov_x = d2 * e_x_cov_x;
+      // Error checking for invalid values (the negated form also rejects NaN).
+      if (!(e_x_cov_x <= 1.0f && e_x_cov_x >= 0.0f)) {
         continue;
       }
-    }
+      // Reusable portion of Equation 6.12 and 6.13 [Magnusson 2009]
+      e_x_cov_x *= d1;
 
-    float cx[3];
-    symMul(c, xt, cx);
-
-    // e^(-d_2/2 * (x_k - mu_k)^T Sigma_k^-1 (x_k - mu_k)) Equation 6.9 [Magnusson 2009]
-    float e_x_cov_x = expf(-d2 * dot3(xt, cx) * 0.5f);
-    // Probability of transformed points existence, Equation 6.9 [Magnusson 2009]
-    const float score_inc = -d1 * e_x_cov_x;
-
-    e_x_cov_x = d2 * e_x_cov_x;
-    // Error checking for invalid values (the negated form also rejects NaN).
-    if (!(e_x_cov_x <= 1.0f && e_x_cov_x >= 0.0f)) {
-      continue;
-    }
-    // Reusable portion of Equation 6.12 and 6.13 [Magnusson 2009]
-    e_x_cov_x *= d1;
-
-    // g_i = x'^T Sigma^-1 dT/dp_i. Sigma^-1 is symmetric, so x'^T C pg_i == (C x')^T pg_i.
-    float g[6];
-    g[0] = cx[0];
-    g[1] = cx[1];
-    g[2] = cx[2];
-    for (int i = 0; i < 3; i++) {
-      g[3 + i] = dot3(cx, pg[i]);
-    }
-
-    // Update score and gradient, Equation 6.10 and 6.12 [Magnusson 2009]
-    acc[0] += score_inc;
-    for (int i = 0; i < 6; i++) {
-      acc[1 + i] += e_x_cov_x * g[i];
-    }
-
-    if (HESSIAN) {
-      // C * pg_i for all 6 columns of J_E (the first three are the columns of C)
-      float cpg[6][3];
-      cpg[0][0] = c[0], cpg[0][1] = c[1], cpg[0][2] = c[2];
-      cpg[1][0] = c[1], cpg[1][1] = c[3], cpg[1][2] = c[4];
-      cpg[2][0] = c[2], cpg[2][1] = c[4], cpg[2][2] = c[5];
+      // g_i = x'^T Sigma^-1 dT/dp_i. Sigma^-1 is symmetric, so x'^T C pg_i == (C x')^T pg_i.
+      float g[6];
+      g[0] = cx[0];
+      g[1] = cx[1];
+      g[2] = cx[2];
       for (int i = 0; i < 3; i++) {
-        symMul(c, pg[i], cpg[3 + i]);
+        g[3 + i] = dot3(cx, pg[i]);
       }
 
-      // Update hessian, Equation 6.13 [Magnusson 2009]
-      int h = 7;
+      if (score_inc > nearest_score) {
+        nearest_score = score_inc;
+      }
+
+      // Update score and gradient, Equation 6.10 and 6.12 [Magnusson 2009]
+      acc[0] += score_inc;
       for (int i = 0; i < 6; i++) {
-        for (int j = i; j < 6; j++, h++) {
-          // pg_j^T C pg_i
-          const float jcj = (j < 3) ? cpg[i][j] : dot3(pg[j - 3], cpg[i]);
-          // x'^T C H_E(i, j)
-          float xch = 0.0f;
-          if (i >= 3) {
-            const int hb = (i == 3) ? (j - 3) : (i == 4 ? (j == 4 ? 3 : 4) : 5);
-            xch = dot3(cx, ph[hb]);
+        acc[1 + i] += e_x_cov_x * g[i];
+      }
+
+      if (HESSIAN) {
+        // C * pg_i for all 6 columns of J_E (the first three are the columns of C)
+        float cpg[6][3];
+        cpg[0][0] = c[0], cpg[0][1] = c[1], cpg[0][2] = c[2];
+        cpg[1][0] = c[1], cpg[1][1] = c[3], cpg[1][2] = c[4];
+        cpg[2][0] = c[2], cpg[2][1] = c[4], cpg[2][2] = c[5];
+        for (int i = 0; i < 3; i++) {
+          symMul(c, pg[i], cpg[3 + i]);
+        }
+
+        // Update hessian, Equation 6.13 [Magnusson 2009]
+        int h = 7;
+        for (int i = 0; i < 6; i++) {
+          for (int j = i; j < 6; j++, h++) {
+            // pg_j^T C pg_i
+            const float jcj = (j < 3) ? cpg[i][j] : dot3(pg[j - 3], cpg[i]);
+            // x'^T C H_E(i, j)
+            float xch = 0.0f;
+            if (i >= 3) {
+              const int hb = (i == 3) ? (j - 3) : (i == 4 ? (j == 4 ? 3 : 4) : 5);
+              xch = dot3(cx, ph[hb]);
+            }
+            acc[h] += e_x_cov_x * (-d2 * g[i] * g[j] + xch + jcj);
           }
-          acc[h] += e_x_cov_x * (-d2 * g[i] * g[j] + xch + jcj);
         }
       }
     }
+  }
+
+  if (num_neighbors > 0) {
+    acc[28] += nearest_score;
+    acc[29] += 1.0f;
+    acc[30] += static_cast<float>(num_neighbors);
   }
 }
 
@@ -393,26 +419,79 @@ NDT_HD void accumulateScore(const GridView& grid, const KernelParams& p, const f
     if (!cellKey(grid, ijk, n, key)) {
       continue;
     }
-    const int v = lookupVoxel(grid, key, NeighborRange<MODE>::flag);
-    if (v < 0) {
-      continue;
-    }
-    float mean[3], c[6];
-    loadVoxel(grid, v, mean, c);
-    const float xt[3] = {x_trans[0] - mean[0], x_trans[1] - mean[1], x_trans[2] - mean[2]};
-    if (MODE == kModeKdtree) {
-      if (dot3(xt, xt) >= p.radius2) {
-        continue;
+    uint32_t slot = firstSlot(grid, key);
+    int v;
+    while ((v = nextVoxel(grid, key, NeighborRange<MODE>::flag, slot)) >= 0) {
+      float mean[3], c[6];
+      loadVoxel(grid, v, mean, c);
+      const float xt[3] = {x_trans[0] - mean[0], x_trans[1] - mean[1], x_trans[2] - mean[2]};
+      if (MODE == kModeKdtree) {
+        if (dot3(xt, xt) >= p.radius2) {
+          continue;
+        }
       }
+      float cx[3];
+      symMul(c, xt, cx);
+      const float e_x_cov_x = expf(-p.gauss_d2 * dot3(xt, cx) * 0.5f);
+      sum += -p.gauss_d1 * e_x_cov_x - p.gauss_d3;
+      count++;
     }
-    float cx[3];
-    symMul(c, xt, cx);
-    const float e_x_cov_x = expf(-p.gauss_d2 * dot3(xt, cx) * 0.5f);
-    sum += -p.gauss_d1 * e_x_cov_x - p.gauss_d3;
-    count++;
   }
   if (count > 0) {
     acc[0] += sum / static_cast<float>(count);
+  }
+}
+
+/** \brief Sum of -d1 * exp(-d2/2 * x'^T C x') over the neighbor voxels of one point and the largest of these values.
+ *  \return false if the point has no neighbor voxel. As in tier4/ndt_omp. */
+template <int MODE>
+NDT_HD bool pointProbability(const GridView& grid, const KernelParams& p, const float4 src, float& sum, float& nearest) {
+  float x_trans[3];
+  int ijk[3];
+  sum = 0.0f;
+  nearest = 0.0f;
+  if (!transformAndLocate(grid, p, src, x_trans, ijk)) {
+    return false;
+  }
+
+  bool found = false;
+  for (int n = NeighborRange<MODE>::begin; n < NeighborRange<MODE>::end; n++) {
+    int32_t key;
+    if (!cellKey(grid, ijk, n, key)) {
+      continue;
+    }
+    uint32_t slot = firstSlot(grid, key);
+    int v;
+    while ((v = nextVoxel(grid, key, NeighborRange<MODE>::flag, slot)) >= 0) {
+      float mean[3], c[6];
+      loadVoxel(grid, v, mean, c);
+      const float xt[3] = {x_trans[0] - mean[0], x_trans[1] - mean[1], x_trans[2] - mean[2]};
+      if (MODE == kModeKdtree) {
+        if (dot3(xt, xt) >= p.radius2) {
+          continue;
+        }
+      }
+      float cx[3];
+      symMul(c, xt, cx);
+      const float score = -p.gauss_d1 * expf(-p.gauss_d2 * dot3(xt, cx) * 0.5f);
+      sum += score;
+      if (score > nearest) {
+        nearest = score;
+      }
+      found = true;
+    }
+  }
+  return found;
+}
+
+/** \brief acc layout: [0] sum of the voxel scores, [1] nearest voxel score, [2] 1 if the point has neighbors. */
+template <int MODE>
+NDT_HD void accumulateProbability(const GridView& grid, const KernelParams& p, const float4 src, float acc[kNumProbabilityValues]) {
+  float sum, nearest;
+  if (pointProbability<MODE>(grid, p, src, sum, nearest)) {
+    acc[0] += sum;
+    acc[1] += nearest;
+    acc[2] += 1.0f;
   }
 }
 
@@ -440,19 +519,21 @@ inline void setTransform(KernelParams& p, const float transform[16], const doubl
 }
 
 /** \brief Open addressing hash table (linear probing, load factor <= 0.5). Returns the capacity (power of two).
- *  Containers must provide resize() and operator[]. */
+ *  A key may occur several times. Containers must provide resize() and operator[]. */
 template <typename KeyVector, typename ValueVector, typename FlagVector, typename InKeyVector>
-std::size_t buildHashTable(const InKeyVector& keys, const FlagVector& flags, KeyVector& slot_keys, ValueVector& slot_values) {
+std::size_t buildHashTable(const InKeyVector& keys, const FlagVector& flags, KeyVector& slot_keys, ValueVector& slot_values, bool& unique_keys) {
   const std::size_t n = keys.size();
   std::size_t capacity = 1024;
   while (capacity < 2 * n) capacity <<= 1;
   slot_keys.assign(capacity, kEmptySlot);
   slot_values.assign(capacity, 0u);
   const uint32_t mask = static_cast<uint32_t>(capacity - 1);
+  unique_keys = true;
   for (std::size_t i = 0; i < n; i++) {
     const int32_t key = keys[i];
     uint32_t slot = hashKey(key) & mask;
-    while (slot_keys[slot] != kEmptySlot && slot_keys[slot] != key) {
+    while (slot_keys[slot] != kEmptySlot) {
+      unique_keys = unique_keys && slot_keys[slot] != key;
       slot = (slot + 1) & mask;
     }
     slot_keys[slot] = key;

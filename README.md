@@ -10,6 +10,7 @@ CUDA accelerated **Normal Distributions Transform (NDT)** point cloud registrati
 
 - **Same API as `pclomp::NormalDistributionsTransform`** — derives from `pcl::Registration`, same setters/getters and defaults, accepts `pclomp::NeighborSearchMethod`. A compatibility header provides `pclomp::NormalDistributionsTransformCUDA`.
 - **Same results** — the voxel grid is bit-identical to ndt_omp's; score, gradient and hessian match to ~1e-6 relative error; `align()` results match within 25 µm and 0.02° on the sample data.
+- **The additions of [tier4/ndt_omp](https://github.com/tier4/ndt_omp)** — nearest voxel transformation likelihood (NVTL), `getResult()`, regularization, and `MultiGridNormalDistributionsTransformCUDA`, whose map is made of tiles that can be added and removed while running. Results match tier4/ndt_omp to about a micrometer on the sample data.
 - **All four neighbor search methods on the GPU** — `KDTREE` (exact radius search), `DIRECT26`, `DIRECT7`, `DIRECT1`.
 - **Deterministic** — double precision reduction with a fixed reduction tree: repeated runs on the same GPU give identical results.
 - **Modern packaging** — C++17, CUDA 11.4–12.x, default architectures Turing → Hopper incl. Jetson Orin; `find_package(ndt_cuda)` + `ndt_cuda::ndt_cuda` in plain CMake and ROS 2 (Humble, Jazzy); the CUDA runtime is linked statically (only the NVIDIA driver is needed at runtime).
@@ -67,10 +68,11 @@ target_link_libraries(your_target ndt_cuda::ndt_cuda)
 |---|---|---|
 | `CMAKE_CUDA_ARCHITECTURES` | `75;86;87;89;90` (`75;86;87` with CUDA < 11.8) | Target GPUs. Each entry also embeds PTX, so newer GPUs JIT compile. Use `native` (CMake ≥ 3.24) to build only for the installed GPU. |
 | `NDT_CUDA_BUILD_EXAMPLES` | `ON` | `ndt_cuda_align` example |
-| `NDT_CUDA_BUILD_TESTS` | `OFF` | Validation test (downloads koide3/ndt_omp as reference) |
-| `NDT_CUDA_BUILD_GPU_TESTS` | `OFF` | Test of the real CUDA kernels, skipped when no GPU is available (downloads koide3/ndt_omp as reference) |
+| `NDT_CUDA_BUILD_TESTS` | `OFF` | Validation tests (download koide3/ndt_omp and tier4/ndt_omp as references) |
+| `NDT_CUDA_BUILD_GPU_TESTS` | `OFF` | Tests of the real CUDA kernels, skipped when no GPU is available (download koide3/ndt_omp and tier4/ndt_omp as references) |
 | `NDT_CUDA_BUILD_BENCHMARK` | `OFF` | ndt_omp vs ndt_cuda benchmark (downloads koide3/ndt_omp) |
 | `NDT_OMP_SOURCE_DIR` | — | Use a local ndt_omp checkout instead of downloading it |
+| `NDT_OMP_TIER4_SOURCE_DIR` | — | Use a local tier4/ndt_omp checkout instead of downloading it |
 | `NDT_CUDA_ENABLE_CUDA` | `ON` | With `ON`, configuring fails if no CUDA compiler is found. `OFF` builds only the GPU-less tests (no CUDA toolkit needed) |
 
 ## Usage
@@ -139,7 +141,7 @@ The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cu
 - `setResolution()` after `setInputTarget()` rebuilds the voxel grid right away. ndt_omp rebuilds it there only if a source cloud is already set, and otherwise keeps the old resolution.
 - Non-finite target points are always skipped, even if the cloud is wrongly marked `is_dense`.
 - `align()` reports no convergence if no voxel is available on the GPU: the map has no usable voxel, or an earlier `setInputTarget()` threw (for example, out of GPU memory). Set the target again to recover.
-- Not copyable, because an instance owns its GPU state. Use a separate instance or a pointer.
+- A copy has its own GPU state and uploads the map to it when first needed.
 - With several GPUs, an instance on a non-current device restores the thread's current device after each call, which can also create a CUDA context there. Use `CUDA_VISIBLE_DEVICES` to keep a process off the other GPUs completely. Only single-GPU operation has been tested.
 - Faithful to ndt_omp (kept on purpose so that both give the same results): the covariance accumulator starts from the identity, which adds a small `I·(n−1)/n²` regularization; `DIRECT26` excludes the voxel that contains the point.
 
@@ -156,12 +158,15 @@ The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cu
 | Map shifted by 47 km, scan in sensor frame | same result as unshifted (mm level, as ndt_omp) |
 | `pcl::Registration::Ptr` usage, `pclomp_compat.hpp` with and without ndt_omp | compiles and converges |
 | `getFitnessScore()` vs ndt_omp with `DIRECT7`, also through `pcl::Registration*` | ≤ 1e-6 relative error |
+| Multi-tile NDT vs tier4/ndt_omp with Autoware's default parameters: tiles, copies, regularization, NVTL | same iteration counts, poses within about 1 µm, scores within 1e-3 |
 
 ```bash
 cmake -B build -DNDT_CUDA_BUILD_TESTS=ON && cmake --build build -j && (cd build && ctest --output-on-failure)
 # ROS 2:
 colcon build --packages-select ndt_cuda --cmake-args -DNDT_CUDA_BUILD_TESTS=ON && colcon test --packages-select ndt_cuda
 ```
+
+`test/ndt_cuda_multigrid_test.cpp` makes the tier4/ndt_omp comparison. It also needs no GPU, and it runs on the real kernels as `ndt_cuda_multigrid_gpu_test`.
 
 `test/ndt_cuda_gpu_test.cpp` runs the real CUDA kernels and reductions, which the test above and CI do not execute: `align()` against ndt_omp for all search methods (also with 300000 source points) and repeated runs being bit-identical. Run it on a machine with a GPU:
 
@@ -203,6 +208,7 @@ ndt_cuda is released under the [BSD 3-Clause License](LICENSE). It is a derivati
 
 - **PCL** `NormalDistributionsTransform` and `VoxelGridCovariance` — BSD 3-Clause, © Willow Garage, Inc. and Open Perception, Inc.; NDT implementation by Brian Okorn, math refactored by Todor Stoyanov.
 - **[koide3/ndt_omp](https://github.com/koide3/ndt_omp)** — BSD 2-Clause, © 2019 Kenji Koide. The API, the neighbor search methods, the float derivative formulation and the sample data come from ndt_omp.
+- **[tier4/ndt_omp](https://github.com/tier4/ndt_omp)** — a fork of ndt_omp under the same license. The multi-tile interface, NVTL, `getResult()` and regularization come from this fork.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full notices and the list of derived files. Algorithm references:
 

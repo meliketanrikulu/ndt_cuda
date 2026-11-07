@@ -9,6 +9,7 @@ code derived from these projects; each of them keeps the original copyright noti
 | `include/ndt_cuda/ndt_cuda.hpp`, `include/ndt_cuda/impl/ndt_cuda.hpp` | PCL `pcl/registration/ndt.h` (optimizer, More-Thuente line search) via ndt_omp `ndt_omp.h` / `ndt_omp_impl.hpp` |
 | `include/ndt_cuda/voxel_grid_covariance.hpp`, `include/ndt_cuda/impl/voxel_grid_covariance.hpp` | PCL `pcl/filters/voxel_grid_covariance.h` (voxel statistics) via ndt_omp `voxel_grid_covariance_omp*.h` |
 | `include/ndt_cuda/angle_derivatives.hpp`, `src/ndt_cuda_kernels.cuh` | PCL / ndt_omp derivative computation (`computeAngleDerivatives`, `computePointDerivatives`, `updateDerivatives`) |
+| `include/ndt_cuda/multigrid_ndt_cuda.hpp`, `include/ndt_cuda/impl/multigrid_ndt_cuda.hpp`, `include/ndt_cuda/ndt_struct.hpp`, and the NVTL, `getResult()` and regularization parts of `include/ndt_cuda/ndt_cuda.hpp`, `include/ndt_cuda/impl/ndt_cuda.hpp` and `src/ndt_cuda_kernels.cuh` | tier4/ndt_omp `multigrid_ndt_omp*.h`, `ndt_struct.hpp` (a fork of koide3/ndt_omp under the same BSD 2-Clause license) |
 | `data/251370668.pcd`, `data/251371071.pcd` | Sample scans shipped with ndt_omp |
 
 The algorithm itself is described in:
@@ -16,8 +17,8 @@ The algorithm itself is described in:
 - M. Magnusson, *The Three-Dimensional Normal-Distributions Transform — an Efficient Representation for Registration, Surface Analysis, and Loop Detection*, PhD thesis, Örebro University, 2009.
 - J. J. Moré and D. J. Thuente, *Line Search Algorithms with Guaranteed Sufficient Decrease*, ACM Transactions on Mathematical Software, 1994.
 
-The test and benchmark programs download koide3/ndt_omp at build time to use it as a reference
-implementation; it is not part of the library.
+The test and benchmark programs download koide3/ndt_omp and tier4/ndt_omp at build time to use them as reference
+implementations; they are not part of the library.
 
 ---
 

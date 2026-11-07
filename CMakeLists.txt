@@ -15,6 +15,7 @@ option(NDT_CUDA_BUILD_TESTS "Build the validation test (no GPU needed; downloads
 option(NDT_CUDA_BUILD_GPU_TESTS "Build the test of the real CUDA kernels (needs a GPU to run; downloads koide3/ndt_omp as reference)" OFF)
 option(NDT_CUDA_BUILD_BENCHMARK "Build the ndt_omp vs ndt_cuda benchmark (downloads koide3/ndt_omp)" OFF)
 set(NDT_OMP_SOURCE_DIR "" CACHE PATH "Local checkout of koide3/ndt_omp used as reference by the tests / benchmark (downloaded if empty)")
+set(NDT_OMP_TIER4_SOURCE_DIR "" CACHE PATH "Local checkout of tier4/ndt_omp used as reference by the tests (downloaded if empty)")
 
 # ---------------------------------------------------------------------------------------------
 # Dependencies
@@ -131,6 +132,36 @@ if(NDT_CUDA_BUILD_TESTS OR ((NDT_CUDA_BUILD_BENCHMARK OR NDT_CUDA_BUILD_GPU_TEST
 endif()
 
 # ---------------------------------------------------------------------------------------------
+# Reference implementation (tier4/ndt_omp) for the tests of the multi-tile NDT. In a separate
+# target because it defines the same pclomp classes as koide3/ndt_omp.
+# ---------------------------------------------------------------------------------------------
+if(NDT_CUDA_BUILD_TESTS OR (NDT_CUDA_BUILD_GPU_TESTS AND NDT_CUDA_HAVE_CUDA))
+  if(NDT_OMP_TIER4_SOURCE_DIR)
+    set(NDT_OMP_TIER4_REFERENCE_DIR ${NDT_OMP_TIER4_SOURCE_DIR})
+  else()
+    include(FetchContent)
+    FetchContent_Declare(ndt_omp_tier4_reference
+      GIT_REPOSITORY https://github.com/tier4/ndt_omp.git
+      GIT_TAG 025f263f41b7cd2d00a547ca787f2d6e8e8fa79b
+      SOURCE_SUBDIR do-not-add-subdirectory  # sources only, its own CMakeLists.txt is not used
+    )
+    FetchContent_MakeAvailable(ndt_omp_tier4_reference)
+    set(NDT_OMP_TIER4_REFERENCE_DIR ${ndt_omp_tier4_reference_SOURCE_DIR})
+  endif()
+
+  add_library(ndt_omp_tier4_reference STATIC
+    ${NDT_OMP_TIER4_REFERENCE_DIR}/src/multigrid_pclomp/multigrid_ndt_omp.cpp
+    ${NDT_OMP_TIER4_REFERENCE_DIR}/src/multigrid_pclomp/multi_voxel_grid_covariance_omp.cpp
+    ${NDT_OMP_TIER4_REFERENCE_DIR}/src/pclomp/ndt_omp.cpp
+    ${NDT_OMP_TIER4_REFERENCE_DIR}/src/pclomp/voxel_grid_covariance_omp.cpp
+  )
+  target_include_directories(ndt_omp_tier4_reference SYSTEM PUBLIC ${NDT_OMP_TIER4_REFERENCE_DIR}/include)
+  target_compile_definitions(ndt_omp_tier4_reference PUBLIC ${NDT_CUDA_PCL_DEFINITIONS})
+  target_compile_options(ndt_omp_tier4_reference PRIVATE -w)
+  target_link_libraries(ndt_omp_tier4_reference PUBLIC pcl_common pcl_filters pcl_registration OpenMP::OpenMP_CXX)
+endif()
+
+# ---------------------------------------------------------------------------------------------
 # Tests (CPU emulation of the GPU backend: no GPU and no CUDA toolkit required)
 # ---------------------------------------------------------------------------------------------
 if(NDT_CUDA_BUILD_TESTS)
@@ -145,6 +176,16 @@ if(NDT_CUDA_BUILD_TESTS)
   target_compile_definitions(ndt_cuda_test PRIVATE NDT_CUDA_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data" ${NDT_CUDA_PCL_DEFINITIONS})
   target_link_libraries(ndt_cuda_test PRIVATE ndt_omp_reference pcl_common pcl_io pcl_filters pcl_registration Eigen3::Eigen)
   add_test(NAME ndt_cuda_test COMMAND ndt_cuda_test)
+
+  add_executable(ndt_cuda_multigrid_test
+    test/ndt_cuda_multigrid_test.cpp
+    test/gpu_backend_emulated.cpp
+    $<TARGET_OBJECTS:ndt_cuda_core>
+  )
+  target_include_directories(ndt_cuda_multigrid_test PRIVATE include src)
+  target_compile_definitions(ndt_cuda_multigrid_test PRIVATE NDT_CUDA_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data" ${NDT_CUDA_PCL_DEFINITIONS})
+  target_link_libraries(ndt_cuda_multigrid_test PRIVATE ndt_omp_tier4_reference pcl_common pcl_io pcl_filters pcl_registration Eigen3::Eigen)
+  add_test(NAME ndt_cuda_multigrid_test COMMAND ndt_cuda_multigrid_test)
 endif()
 
 # ---------------------------------------------------------------------------------------------
@@ -157,6 +198,12 @@ if(NDT_CUDA_HAVE_CUDA AND NDT_CUDA_BUILD_GPU_TESTS)
   target_link_libraries(ndt_cuda_gpu_test PRIVATE ndt_cuda ndt_omp_reference pcl_io pcl_filters)
   add_test(NAME ndt_cuda_gpu_test COMMAND ndt_cuda_gpu_test)
   set_tests_properties(ndt_cuda_gpu_test PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_executable(ndt_cuda_multigrid_gpu_test test/ndt_cuda_multigrid_test.cpp)
+  target_compile_definitions(ndt_cuda_multigrid_gpu_test PRIVATE NDT_CUDA_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+  target_link_libraries(ndt_cuda_multigrid_gpu_test PRIVATE ndt_cuda ndt_omp_tier4_reference pcl_io pcl_filters)
+  add_test(NAME ndt_cuda_multigrid_gpu_test COMMAND ndt_cuda_multigrid_gpu_test)
+  set_tests_properties(ndt_cuda_multigrid_gpu_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # ---------------------------------------------------------------------------------------------

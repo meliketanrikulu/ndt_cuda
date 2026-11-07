@@ -44,6 +44,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <vector>
 
@@ -54,6 +55,7 @@
 #include <pcl/registration/registration.h>
 
 #include <ndt_cuda/gpu_backend.hpp>
+#include <ndt_cuda/ndt_struct.hpp>
 #include <ndt_cuda/search_method.hpp>
 #include <ndt_cuda/voxel_grid_covariance.hpp>
 
@@ -62,7 +64,8 @@ namespace ndt_cuda {
 /** \brief Normal Distributions Transform registration running on an NVIDIA GPU.
  *
  * Same interface and results as pclomp::NormalDistributionsTransform (koide3/ndt_omp): same parameters and defaults,
- * same neighbor search methods and the same Newton / More-Thuente optimization. Every score / gradient / hessian
+ * same neighbor search methods and the same Newton / More-Thuente optimization, with the additions of tier4/ndt_omp
+ * (see getResult()). Every score / gradient / hessian
  * evaluation (transforming the source points, finding their neighbor voxels and accumulating Equations 6.9-6.13
  * [Magnusson 2009]) runs on the GPU. The target voxel grid is built on the CPU when the target or the resolution
  * changes and uploaded once.
@@ -96,12 +99,19 @@ public:
 
   ~NormalDistributionsTransformCUDA() override;
 
-  /** \brief Not copyable: an instance owns its GPU state. */
-  NormalDistributionsTransformCUDA(const NormalDistributionsTransformCUDA&) = delete;
-  NormalDistributionsTransformCUDA& operator=(const NormalDistributionsTransformCUDA&) = delete;
+  /** \brief A copy has its own GPU state. The map is uploaded to it when it is first needed. */
+  NormalDistributionsTransformCUDA(const NormalDistributionsTransformCUDA& other);
+  NormalDistributionsTransformCUDA& operator=(const NormalDistributionsTransformCUDA& other);
 
-  /** \brief Kept for API compatibility with pclomp::NormalDistributionsTransform; has no effect. */
-  void setNumThreads(int) {}
+  /** \brief Kept for API compatibility with pclomp::NormalDistributionsTransform; has no effect on the GPU. */
+  void setNumThreads(int num_threads) { num_threads_ = num_threads; }
+  int getNumThreads() const { return num_threads_; }
+
+  /** \brief Sets all parameters at once, as in tier4/ndt_omp. */
+  void setParams(const NdtParams& params);
+  NdtParams getParams() const;
+
+  int getMaxIterations() const { return max_iterations_; }
 
   /** \brief Provide a pointer to the input target (the map). Builds and uploads the voxel grid. */
   void setInputTarget(const PointCloudTargetConstPtr& cloud) override {
@@ -163,6 +173,24 @@ public:
   /** \brief Registration alignment probability (score / number of source points). */
   double getTransformationProbability() const { return trans_probability_; }
 
+  /** \brief Nearest voxel transformation likelihood (NVTL) of the last alignment: the mean over the points with
+   *  neighbor voxels of the score of their best voxel. */
+  double getNearestVoxelTransformationLikelihood() const { return nearest_voxel_transformation_likelihood_; }
+
+  /** \brief Hessian of the last alignment. */
+  Eigen::Matrix<double, 6, 6> getHessian() const { return hessian_; }
+
+  /** \brief The initial pose and the pose after each iteration of the last alignment. */
+  const std::vector<Eigen::Matrix4f, Eigen::aligned_allocator<Eigen::Matrix4f>>& getFinalTransformationArray() const { return transformation_array_; }
+
+  /** \brief Everything the last alignment produced, as in tier4/ndt_omp. */
+  NdtResult getResult() const;
+
+  /** \brief Pulls the alignment toward a pose along its longitudinal axis, as in tier4/ndt_omp. Off until a pose is set. */
+  void setRegularizationScaleFactor(float scale_factor) { regularization_scale_factor_ = scale_factor; }
+  void setRegularizationPose(const Eigen::Matrix4f& pose) { regularization_pose_ = pose; }
+  void unsetRegularizationPose() { regularization_pose_.reset(); }
+
   /** \brief Number of iterations of the last alignment. */
   int getFinalNumIteration() const { return nr_iterations_; }
 
@@ -191,6 +219,15 @@ public:
   /** \brief Mean negative log likelihood of an already transformed cloud (lower is better), as in ndt_omp. */
   double calculateScore(const PointCloudSource& cloud) const;
 
+  /** \brief Sum of the scores of all point / neighbor voxel pairs of an already transformed cloud, divided by its size (higher is better), as in tier4/ndt_omp. */
+  double calculateTransformationProbability(const PointCloudSource& cloud) const;
+
+  /** \brief NVTL of an already transformed cloud (higher is better), as in tier4/ndt_omp. */
+  double calculateNearestVoxelTransformationLikelihood(const PointCloudSource& cloud) const;
+
+  /** \brief Points of an already transformed cloud that have neighbor voxels, with the score of their best voxel as intensity, as in tier4/ndt_omp. */
+  pcl::PointCloud<pcl::PointXYZI> calculateNearestVoxelScoreEachPoint(const PointCloudSource& cloud) const;
+
   /** \brief Neighbor search method (public for compatibility with pclomp::NormalDistributionsTransform). */
   NeighborSearchMethod search_method;
 
@@ -214,10 +251,19 @@ protected:
   void computeTransformation(PointCloudSource& output, const Eigen::Matrix4f& guess) override;
 
   /** \brief Builds the voxel grid on the CPU and uploads it to the GPU. */
-  void init();
+  virtual void init();
+
+  /** \brief Uploads the current map to this instance's GPU state. */
+  virtual void uploadTarget() const;
+
+  /** \brief Uploads the map if a copy has not done so yet. */
+  void prepareTarget() const;
+
+  /** \brief Counts a finished iteration. \return true if the optimization should stop. */
+  virtual bool finishIteration(double step_length);
 
   /** \brief Score, gradient and hessian of the source cloud transformed by final_transformation_ (on the GPU). */
-  double computeDerivatives(Eigen::Matrix<double, 6, 1>& score_gradient, Eigen::Matrix<double, 6, 6>& hessian, const Eigen::Matrix<double, 6, 1>& p, bool compute_hessian = true);
+  double computeDerivatives(Eigen::Matrix<double, 6, 1>& score_gradient, Eigen::Matrix<double, 6, 6>& hessian, const Eigen::Matrix<double, 6, 1>& p, bool compute_hessian = true, bool record = true);
 
   /** \brief Line search with guaranteed sufficient decrease [More, Thuente 1994]. */
   double computeStepLengthMT(
@@ -247,17 +293,27 @@ protected:
 
   TargetGrid target_cells_;
   bool build_target_kdtree_ = true;
+  bool use_line_search_ = true;
+  int num_threads_ = 1;
   float resolution_ = 1.0f;
   double step_size_ = 0.1;
   double outlier_ratio_ = 0.55;
   double gauss_d1_ = 0.0, gauss_d2_ = 0.0, gauss_d3_ = 0.0;
   double trans_probability_ = 0.0;
+  double nearest_voxel_transformation_likelihood_ = 0.0;
+  float regularization_scale_factor_ = 0.0f;
+  std::optional<Eigen::Matrix4f> regularization_pose_;
+  Eigen::Matrix<double, 6, 6> hessian_ = Eigen::Matrix<double, 6, 6>::Zero();
+  std::vector<Eigen::Matrix4f, Eigen::aligned_allocator<Eigen::Matrix4f>> transformation_array_;
+  std::vector<float> transform_probability_array_;
+  std::vector<float> nearest_voxel_transformation_likelihood_array_;
 
   float j_ang_[8][3] = {};
   float h_ang_[15][3] = {};
 
   /** \brief GPU state. */
   std::unique_ptr<GpuBackend> backend_;
+  mutable bool target_upload_pending_ = false;
   mutable std::vector<float> packed_;
 
 public:
