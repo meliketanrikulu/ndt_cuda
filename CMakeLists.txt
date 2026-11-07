@@ -175,6 +175,10 @@ if(NDT_CUDA_HAVE_CUDA AND NDT_CUDA_BUILD_BENCHMARK)
   add_executable(ndt_cuda_benchmark_report benchmark/benchmark_report.cpp)
   target_link_libraries(ndt_cuda_benchmark_report PRIVATE ndt_cuda ndt_omp_reference pcl_io pcl_filters)
   target_compile_definitions(ndt_cuda_benchmark_report PRIVATE NDT_CUDA_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
+  add_executable(ndt_cuda_benchmark_gpu_usage benchmark/benchmark_gpu_usage.cpp)
+  target_link_libraries(ndt_cuda_benchmark_gpu_usage PRIVATE ndt_cuda pcl_io pcl_filters)
+  target_compile_definitions(ndt_cuda_benchmark_gpu_usage PRIVATE NDT_CUDA_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 endif()
 
 # ---------------------------------------------------------------------------------------------

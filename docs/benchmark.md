@@ -7,6 +7,7 @@ On the sample data, ndt_cuda runs 9–93 times faster than ndt_omp and reaches t
 - **Speed:** with the recommended `DIRECT7` method, one `align()` takes 0.64 ms instead of 12.04 ms (19 times faster).
 - **Scaling:** the gap grows with the number of points. On a synthetic cloud of 5 million points, the speedup is 90–190 times.
 - **Agreement with ndt_omp:** the largest differences are 23 µm in translation and 0.017° in rotation.
+- **GPU resources:** about 94 MiB of video memory and about 1% GPU utilization at 10 Hz on the sample data. Larger maps and scans need more, as shown in [GPU memory and utilization](#gpu-memory-and-utilization).
 - **Map updates:** on a 3 million point map, the first `align()` takes 656 ms by default, against 712 ms for ndt_omp. It takes 0.75 ms if the kd-tree that only `getFitnessScore()` needs is turned off.
 
 ## Test setup
@@ -115,16 +116,67 @@ By default, the first `align()` after a map change costs about as much in ndt_cu
 
 Each value is a single measurement, so read these as orders of magnitude. The source cloud has 15950 points and the method is `DIRECT7`.
 
+## GPU memory and utilization
+
+These values describe the library, because this repository has no ROS node. They come from `nvidia-smi` on the same GPU, with no other compute program running. Only 15 MiB of video memory was in use beforehand, and the driver reserved another 326 MiB of the card's 4096 MiB.
+
+### Video memory
+
+ndt_cuda uses about 94 MiB of video memory on the sample data. Most of that is a fixed cost, and the rest grows with the map and the scan.
+
+| Map voxels | Map points | Scan points | Process: context only (MiB) | Process: with map (MiB) | Process: with map and scan (MiB) | Whole GPU: increase (MiB) |
+| --- | --- | --- | --- | --- | --- | --- |
+| 599 (sample data) | 15772 | 15950 | 82 | 84 | 86 | 94 |
+| 100000 | 800000 | 100000 | 82 | 90 | 94 | 102 |
+| 1000000 | 8000000 | 100000 | 82 | 144 | 148 | 156 |
+| 5000000 | 40000000 | 100000 | 82 | 440 | 444 | 452 |
+| 1000000 | 8000000 | 1000000 | 82 | 144 | 164 | 172 |
+| 1000000 | 8000000 | 5000000 | 82 | 144 | 226 | 234 |
+
+For planning, the use on this GPU can be estimated from three parts:
+
+- **Fixed cost:** about 90 MiB, made up of the 82 MiB CUDA context and the 8 MiB more that the whole GPU shows. It could differ on other GPUs and drivers.
+- **Map:** 48 bytes per voxel, plus 8 bytes per hash table slot. The slot count is the smallest power of two that is at least twice the voxel count, with a minimum of 1024. This gives 61.8 MiB for 1 million voxels and 356.9 MiB for 5 million, against 62 and 358 MiB measured.
+- **Scan:** 16 bytes per point. Measured use is 2.5–6 MiB higher than this, because of scratch buffers and allocation granularity.
+
+The map size depends on voxels, not points: more points in the same voxels do not use more video memory. The kd-tree from [Map updates](#map-updates) is built on the CPU and uses no video memory.
+
+### Utilization
+
+At a typical LiDAR rate, ndt_cuda keeps the GPU about 1% busy on the sample data and about 16% busy with a million voxel map and 100000 point scans.
+
+| Map voxels | Scan points | Rate | `align()` (ms) | Time inside `align()` (%) | GPU utilization (%) | Peak GPU utilization (%) | Memory utilization (%) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 599 | 15950 | idle | — | 0.0 | 0.0 | 0 | 0.0 |
+| 599 | 15950 | 10 Hz | 0.92 | 0.9 | 1.0 | 1 | 0.0 |
+| 599 | 15950 | 20 Hz | 0.94 | 1.9 | 1.0 | 1 | 0.0 |
+| 599 | 15950 | continuous (1881 per second) | 0.53 | 100.0 | 75.6 | 83 | 0.0 |
+| 599 | 100000 | 10 Hz | 4.50 | 4.5 | 2.9 | 3 | 0.0 |
+| 599 | 100000 | 20 Hz | 4.48 | 9.0 | 5.9 | 6 | 0.0 |
+| 599 | 100000 | continuous (365 per second) | 2.74 | 100.0 | 78.9 | 81 | 0.0 |
+| 1000000 | 100000 | 10 Hz | 18.00 | 18.0 | 15.7 | 16 | 7.9 |
+| 1000000 | 100000 | 20 Hz | 17.84 | 35.7 | 32.4 | 33 | 16.7 |
+| 1000000 | 100000 | continuous (59 per second) | 16.99 | 100.0 | 96.0 | 97 | 48.5 |
+
+Each row is a 30 second run, sampled about every 275 ms (109–113 samples). "Memory utilization" is the share of time the GPU was reading or writing its memory, not how much memory is in use.
+
+- **Low values:** `nvidia-smi` reports whole percentages averaged over a window, so readings near 1% are approximate.
+- **Larger maps:** with the same 100000 point scans, one `align()` takes about 6 times longer on the million voxel map when run continuously (2.74 against 16.99 ms).
+- **Slower calls at low rates:** one `align()` takes longer at 10 or 20 Hz than in a continuous loop (0.92 against 0.53 ms). The GPU is probably leaving its idle state between calls, although this was not measured.
+- **Synthetic data:** the large maps fill a cube of voxels with 8 random points each, and the scans are random map points. Real maps have a different structure, so the larger rows are estimates.
+
 ## Limitations
 
 These results come from one machine, so the speedups should not be generalized.
 
 - **Hardware:** only the RTX 3050 Ti was tested. There are no measurements for desktop GPUs or Jetson Orin.
-- **Data:** the real data is two small scans. The larger clouds and maps are synthetic, and no real driving log was tested. Maps with many more voxels may behave differently.
+- **Data:** the real data is two small scans. The larger clouds and maps are synthetic, and no real driving log was tested.
 - **Compiler flags:** `-march=native` was not used. It could speed up ndt_omp and so lower the speedup.
-- **Not measured:** GPU memory use, power draw, end-to-end latency inside ROS, and thermal behavior over long runs.
+- **Not measured:** host memory use, power draw, end-to-end latency inside ROS, several instances in one process, and thermal behavior over long runs.
 
 ## Reproducing
+
+The GPU memory and utilization section was measured with the same library code as the rest of this report, using `ndt_cuda_benchmark_gpu_usage`.
 
 `ndt_cuda_benchmark` compares both implementations on the sample data or on your own clouds:
 
@@ -139,4 +191,10 @@ cmake -B build -DNDT_CUDA_BUILD_BENCHMARK=ON && cmake --build build -j
 ```bash
 ./build/ndt_cuda_benchmark_report                       # full run, up to 5 million source points
 ./build/ndt_cuda_benchmark_report data 300000           # shorter run, up to 300000 source points
+```
+
+`ndt_cuda_benchmark_gpu_usage` measures video memory and GPU utilization with `nvidia-smi`. The full run took about 6 minutes, and it should be the only program using the GPU:
+
+```bash
+./build/ndt_cuda_benchmark_gpu_usage
 ```

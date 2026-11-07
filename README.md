@@ -188,7 +188,7 @@ Median time per `align()` on the sample data (about 16000 source points, resolut
 | `DIRECT7` | 12.04 ms | 0.64 ms | ×19 |
 | `DIRECT1` | 6.06 ms | 0.64 ms | ×9 |
 
-These numbers come from one machine and one pair of small scans; run the benchmark on your own hardware and data. See the [benchmark report](docs/benchmark.md) for repeated measurements, large clouds, map updates and limitations.
+These numbers come from one machine and one pair of small scans; run the benchmark on your own hardware and data. See the [benchmark report](docs/benchmark.md) for repeated measurements, large clouds, map updates, GPU memory and utilization, and limitations.
 
 ## Roadmap
 
