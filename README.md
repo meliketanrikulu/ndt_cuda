@@ -9,7 +9,7 @@ CUDA accelerated **Normal Distributions Transform (NDT)** point cloud registrati
 ## Features
 
 - **Same API as `pclomp::NormalDistributionsTransform`** — derives from `pcl::Registration`, same setters/getters and defaults, accepts `pclomp::NeighborSearchMethod`. A compatibility header provides `pclomp::NormalDistributionsTransformCUDA`.
-- **Same results** — the voxel grid is bit-identical to ndt_omp's; score, gradient and hessian match to ~1e-6 relative error; `align()` results match to the micrometer on the sample data.
+- **Same results** — the voxel grid is bit-identical to ndt_omp's; score, gradient and hessian match to ~1e-6 relative error; `align()` results match within 25 µm and 0.02° on the sample data.
 - **All four neighbor search methods on the GPU** — `KDTREE` (exact radius search), `DIRECT26`, `DIRECT7`, `DIRECT1`.
 - **Deterministic** — double precision reduction with a fixed reduction tree: repeated runs on the same GPU give identical results.
 - **Modern packaging** — C++17, CUDA 11.4–12.x, default architectures Turing → Hopper incl. Jetson Orin; `find_package(ndt_cuda)` + `ndt_cuda::ndt_cuda` in plain CMake and ROS 2 (Humble, Jazzy); the CUDA runtime is linked statically (only the NVIDIA driver is needed at runtime).
@@ -155,7 +155,7 @@ The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cu
 | `align()` vs ndt_omp, 4 search methods, identity and perturbed initial guess | ≤ 3e-6 m, ≤ 0.01° |
 | Map shifted by 47 km, scan in sensor frame | same result as unshifted (mm level, as ndt_omp) |
 | `pcl::Registration::Ptr` usage, `pclomp_compat.hpp` with and without ndt_omp | compiles and converges |
-| `getFitnessScore()` vs ndt_omp, also through `pcl::Registration*` | ≤ 1e-6 relative error |
+| `getFitnessScore()` vs ndt_omp with `DIRECT7`, also through `pcl::Registration*` | ≤ 1e-6 relative error |
 
 ```bash
 cmake -B build -DNDT_CUDA_BUILD_TESTS=ON && cmake --build build -j && (cd build && ctest --output-on-failure)
@@ -179,14 +179,14 @@ cmake -B build -DNDT_CUDA_BUILD_BENCHMARK=ON && cmake --build build -j
 
 It runs ndt_omp (all CPU threads) and ndt_cuda on the same clouds and prints the time per alignment, iterations, transformation probability and the difference between the two results, and exits with a non-zero code if the results disagree.
 
-Average time per `align()` on the sample data (about 16000 source points, resolution 1 m), NVIDIA GeForce RTX 3050 Ti Laptop GPU against ndt_omp with 16 threads on an Intel Core i7-11800H:
+Median time per `align()` on the sample data (about 16000 source points, resolution 1 m), NVIDIA GeForce RTX 3050 Ti Laptop GPU against ndt_omp with 16 threads on an Intel Core i7-11800H:
 
 | Method | ndt_omp | ndt_cuda | Speedup |
 |---|---|---|---|
-| `KDTREE` | 20.08 ms | 0.84 ms | ×24 |
-| `DIRECT26` | 60.23 ms | 0.61 ms | ×98 |
-| `DIRECT7` | 14.54 ms | 0.68 ms | ×21 |
-| `DIRECT1` | 6.86 ms | 0.63 ms | ×11 |
+| `KDTREE` | 18.29 ms | 0.79 ms | ×23 |
+| `DIRECT26` | 56.45 ms | 0.61 ms | ×93 |
+| `DIRECT7` | 12.04 ms | 0.64 ms | ×19 |
+| `DIRECT1` | 6.06 ms | 0.64 ms | ×9 |
 
 These numbers come from one machine and one pair of small scans; run the benchmark on your own hardware and data. See the [benchmark report](docs/benchmark.md) for repeated measurements, large clouds, map updates and limitations.
 

@@ -4,7 +4,7 @@
 // Produces the measurements of docs/benchmark.md: repeated timings on the sample data and on synthetic large clouds,
 // ndt_omp thread scaling, agreement with ndt_omp, determinism, getFitnessScore() and the cost of a map change.
 //
-// The full run takes about 10 minutes, nearly all of it in ndt_omp on the largest clouds.
+// The full run takes about 30 minutes, nearly all of it in ndt_omp on the largest clouds.
 //
 // usage: ndt_cuda_benchmark_report [data_dir] [max_source_points]   (max_source_points defaults to 5000000)
 
