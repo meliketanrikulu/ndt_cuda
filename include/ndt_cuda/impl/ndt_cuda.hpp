@@ -62,7 +62,7 @@ ndt_cuda::NormalDistributionsTransformCUDA<PointSource, PointTarget>::NormalDist
   if (GpuBackend::deviceCount() <= 0) {
     throw std::runtime_error("[ndt_cuda::NormalDistributionsTransformCUDA] no CUDA capable device found");
   }
-  backend_ = std::make_shared<GpuBackend>(device);
+  backend_ = std::make_unique<GpuBackend>(device);
 }
 
 template <typename PointSource, typename PointTarget>

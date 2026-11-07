@@ -12,6 +12,7 @@ endif()
 option(NDT_CUDA_ENABLE_CUDA "Build the CUDA library (OFF: only the GPU-less tests can be built)" ON)
 option(NDT_CUDA_BUILD_EXAMPLES "Build the example program" ON)
 option(NDT_CUDA_BUILD_TESTS "Build the validation test (no GPU needed; downloads koide3/ndt_omp as reference)" OFF)
+option(NDT_CUDA_BUILD_GPU_TESTS "Build the test of the real CUDA kernels (needs a GPU to run; downloads koide3/ndt_omp as reference)" OFF)
 option(NDT_CUDA_BUILD_BENCHMARK "Build the ndt_omp vs ndt_cuda benchmark (downloads koide3/ndt_omp)" OFF)
 set(NDT_OMP_SOURCE_DIR "" CACHE PATH "Local checkout of koide3/ndt_omp used as reference by the tests / benchmark (downloaded if empty)")
 
@@ -104,7 +105,7 @@ endif()
 # ---------------------------------------------------------------------------------------------
 # Reference implementation (koide3/ndt_omp) for the tests and the benchmark
 # ---------------------------------------------------------------------------------------------
-if(NDT_CUDA_BUILD_TESTS OR (NDT_CUDA_BUILD_BENCHMARK AND NDT_CUDA_HAVE_CUDA))
+if(NDT_CUDA_BUILD_TESTS OR ((NDT_CUDA_BUILD_BENCHMARK OR NDT_CUDA_BUILD_GPU_TESTS) AND NDT_CUDA_HAVE_CUDA))
   find_package(OpenMP REQUIRED)
   if(NDT_OMP_SOURCE_DIR)
     set(NDT_OMP_REFERENCE_DIR ${NDT_OMP_SOURCE_DIR})
@@ -144,6 +145,18 @@ if(NDT_CUDA_BUILD_TESTS)
   target_compile_definitions(ndt_cuda_test PRIVATE NDT_CUDA_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data" ${NDT_CUDA_PCL_DEFINITIONS})
   target_link_libraries(ndt_cuda_test PRIVATE ndt_omp_reference pcl_common pcl_io pcl_filters pcl_registration Eigen3::Eigen)
   add_test(NAME ndt_cuda_test COMMAND ndt_cuda_test)
+endif()
+
+# ---------------------------------------------------------------------------------------------
+# Test of the real CUDA kernels (reports "skipped" when no GPU is available)
+# ---------------------------------------------------------------------------------------------
+if(NDT_CUDA_HAVE_CUDA AND NDT_CUDA_BUILD_GPU_TESTS)
+  enable_testing()
+  add_executable(ndt_cuda_gpu_test test/ndt_cuda_gpu_test.cpp)
+  target_compile_definitions(ndt_cuda_gpu_test PRIVATE NDT_CUDA_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+  target_link_libraries(ndt_cuda_gpu_test PRIVATE ndt_cuda ndt_omp_reference pcl_io pcl_filters)
+  add_test(NAME ndt_cuda_gpu_test COMMAND ndt_cuda_gpu_test)
+  set_tests_properties(ndt_cuda_gpu_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # ---------------------------------------------------------------------------------------------

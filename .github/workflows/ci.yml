@@ -27,7 +27,7 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cmake g++ git libpcl-dev libeigen3-dev
       - name: Configure
-        run: cmake -B build -DNDT_CUDA_BUILD_TESTS=ON -DNDT_CUDA_BUILD_BENCHMARK=ON -DCMAKE_CUDA_ARCHITECTURES="75;86"
+        run: cmake -B build -DNDT_CUDA_BUILD_TESTS=ON -DNDT_CUDA_BUILD_GPU_TESTS=ON -DNDT_CUDA_BUILD_BENCHMARK=ON -DCMAKE_CUDA_ARCHITECTURES="75;86"
       - name: Build
         run: cmake --build build -j4
       - name: Test

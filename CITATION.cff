@@ -5,7 +5,7 @@ authors:
   - name: "Melike"
 version: 0.1.0
 license: BSD-3-Clause
-repository-code: "https://github.com/YOUR_GITHUB_USER/ndt_cuda"
+repository-code: "https://github.com/meliketanrikulu/ndt_cuda"
 references:
   - type: software
     title: "ndt_omp"

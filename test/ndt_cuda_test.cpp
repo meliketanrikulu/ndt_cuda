@@ -9,7 +9,8 @@
 //   1. score / gradient / hessian against ndt_omp at several poses, for every neighbor search method,
 //   2. gradient and hessian against central finite differences on a synthetic grid,
 //   3. end-to-end align() results against ndt_omp, including large map coordinates,
-//   4. drop-in compatibility (pcl::Registration interface, pclomp_compat.hpp).
+//   4. drop-in compatibility (pcl::Registration interface, pclomp_compat.hpp),
+//   5. target handling (empty target, no kd-tree build on the map, not copyable).
 //
 // usage: ndt_cuda_test [data_dir]
 
@@ -18,6 +19,7 @@
 #include <cstdio>
 #include <random>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include <pcl/common/transforms.h>
@@ -372,7 +374,7 @@ static void testAlignment(const Cloud::Ptr& target, const Cloud::Ptr& source) {
     }
   }
 
-  // Large map coordinates (e.g. UTM / MGRS), as in localization: the map is far from the origin, the scan stays in
+  // Large map coordinates, as in localization: the map is far from the origin, the scan stays in
   // the sensor frame and the initial guess carries the large translation.
   std::printf("\n[3b] large map coordinates (target shifted by (40000, -25000, 50) m, guess = shift)\n");
   const Eigen::Vector3d offset(40000.0, -25000.0, 50.0);
@@ -433,6 +435,34 @@ static void testCompat(const Cloud::Ptr& target, const Cloud::Ptr& source) {
   check(compatStandaloneDirect7() == static_cast<int>(ndt_cuda::DIRECT7), "pclomp::DIRECT7 without ndt_omp (compat header)", 0.0, 0.0);
 }
 
+// ---------------------------------------------------------------------------------------------
+// 5. Target handling
+// ---------------------------------------------------------------------------------------------
+static void testTargetHandling(const Cloud::Ptr& target, const Cloud::Ptr& source) {
+  std::printf("\n[5] target handling\n");
+  using NDT = ndt_cuda::NormalDistributionsTransformCUDA<PointT, PointT>;
+  static_assert(!std::is_copy_constructible_v<NDT> && !std::is_copy_assignable_v<NDT>, "an instance owns its GPU state");
+
+  // pcl::Registration rejects an empty cloud; this must not crash and align() must report the failure.
+  NDT empty;
+  empty.setInputTarget(Cloud::Ptr(new Cloud));
+  empty.setInputSource(source);
+  Cloud out;
+  empty.align(out);
+  check(!empty.hasConverged(), "empty target as first target: align() does not converge", empty.hasConverged() ? 1.0 : 0.0, 0.0);
+
+  // initCompute() builds its kd-tree only while this flag is set.
+  struct Probe : NDT {
+    bool kdtreePending() const { return this->target_cloud_updated_; }
+  };
+  Probe probe;
+  probe.setInputTarget(target);
+  check(!probe.kdtreePending(), "no kd-tree pending after setInputTarget()", probe.kdtreePending() ? 1.0 : 0.0, 0.0);
+  probe.setInputSource(source);
+  probe.align(out);
+  check(probe.hasConverged(), "align() without the kd-tree converged", probe.hasConverged() ? 0.0 : 1.0, 0.0);
+}
+
 int main(int argc, char** argv) {
   const std::string data_dir = argc > 1 ? argv[1] : NDT_CUDA_DATA_DIR;
 
@@ -456,6 +486,7 @@ int main(int argc, char** argv) {
   testFiniteDifferences();
   testAlignment(target, source);
   testCompat(target, source);
+  testTargetHandling(target, source);
 
   std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
   return g_failures ? 1 : 0;

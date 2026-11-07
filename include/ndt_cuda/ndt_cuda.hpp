@@ -94,13 +94,20 @@ public:
 
   ~NormalDistributionsTransformCUDA() override;
 
+  /** \brief Not copyable: an instance owns its GPU state. */
+  NormalDistributionsTransformCUDA(const NormalDistributionsTransformCUDA&) = delete;
+  NormalDistributionsTransformCUDA& operator=(const NormalDistributionsTransformCUDA&) = delete;
+
   /** \brief Kept for API compatibility with pclomp::NormalDistributionsTransform; has no effect. */
   void setNumThreads(int) {}
 
   /** \brief Provide a pointer to the input target (the map). Builds and uploads the voxel grid. */
   void setInputTarget(const PointCloudTargetConstPtr& cloud) override {
     pcl::Registration<PointSource, PointTarget>::setInputTarget(cloud);
-    init();
+    // pcl::Registration rejects an empty cloud and leaves target_ unchanged, so it may still be null.
+    if (target_) init();
+    // The neighbor search runs on the GPU: keeps initCompute() from building its unused kd-tree over the whole map.
+    target_cloud_updated_ = false;
   }
 
   /** \brief Set/change the voxel grid resolution (side length of the voxels). */
@@ -177,6 +184,7 @@ protected:
   using pcl::Registration<PointSource, PointTarget>::input_;
   using pcl::Registration<PointSource, PointTarget>::indices_;
   using pcl::Registration<PointSource, PointTarget>::target_;
+  using pcl::Registration<PointSource, PointTarget>::target_cloud_updated_;
   using pcl::Registration<PointSource, PointTarget>::nr_iterations_;
   using pcl::Registration<PointSource, PointTarget>::max_iterations_;
   using pcl::Registration<PointSource, PointTarget>::previous_transformation_;
@@ -231,8 +239,8 @@ protected:
   float j_ang_[8][3] = {};
   float h_ang_[15][3] = {};
 
-  /** \brief GPU state, shared so that the registration object stays copyable like other pcl::Registration objects. */
-  std::shared_ptr<GpuBackend> backend_;
+  /** \brief GPU state. */
+  std::unique_ptr<GpuBackend> backend_;
   mutable std::vector<float> packed_;
 
 public:

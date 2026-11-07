@@ -4,7 +4,7 @@ CUDA accelerated **Normal Distributions Transform (NDT)** point cloud registrati
 
 `ndt_cuda::NormalDistributionsTransformCUDA` is a GPU port of the NDT of the [Point Cloud Library](https://pointclouds.org) and of its OpenMP variant [koide3/ndt_omp](https://github.com/koide3/ndt_omp). It keeps ndt_omp's interface, parameters, neighbor search methods and optimizer, so existing ndt_omp code can switch to the GPU with a one-line change.
 
-> **Status (v0.1.0):** the GPU code is validated against ndt_omp by a test that runs the exact kernel arithmetic on the CPU (see [Validation](#validation)). GPU timings will be added to this README once measured on real hardware; contributions of benchmark results for other GPUs are welcome.
+> **Status (v0.1.0):** validated against ndt_omp on real hardware (NVIDIA GeForce RTX 3050 Ti Laptop GPU, see [Validation](#validation) and [Benchmark](#benchmark)) and, in CI, by a test that runs the exact kernel arithmetic on the CPU. Other GPUs and Jetson Orin are compiled for but not yet tested; benchmark results for them are welcome.
 
 ## Features
 
@@ -12,7 +12,6 @@ CUDA accelerated **Normal Distributions Transform (NDT)** point cloud registrati
 - **Same results** — the voxel grid is bit-identical to ndt_omp's; score, gradient and hessian match to ~1e-6 relative error; `align()` results match to the micrometer on the sample data.
 - **All four neighbor search methods on the GPU** — `KDTREE` (exact radius search), `DIRECT26`, `DIRECT7`, `DIRECT1`.
 - **Deterministic** — double precision reduction with a fixed reduction tree: repeated runs on the same GPU give identical results.
-- **Large map coordinates** — voxels and transformed points are stored relative to a grid-aligned origin, so UTM / MGRS-sized coordinates do not cost precision on the GPU.
 - **Modern packaging** — C++17, CUDA 11.4–12.x, default architectures Turing → Hopper incl. Jetson Orin; `find_package(ndt_cuda)` + `ndt_cuda::ndt_cuda` in plain CMake and ROS 2 (Humble, Jazzy); the CUDA runtime is linked statically (only the NVIDIA driver is needed at runtime).
 - **GPU-less validation** — the test suite runs without a GPU or CUDA toolkit, so it also runs in CI.
 
@@ -33,7 +32,7 @@ CUDA accelerated **Normal Distributions Transform (NDT)** point cloud registrati
 
 ```bash
 cd ~/ros2_ws/src
-git clone https://github.com/YOUR_GITHUB_USER/ndt_cuda.git
+git clone https://github.com/meliketanrikulu/ndt_cuda.git
 cd ~/ros2_ws
 rosdep install --from-paths src --ignore-src -y   # PCL, Eigen (install the CUDA toolkit separately)
 colcon build --packages-select ndt_cuda --cmake-args -DCMAKE_BUILD_TYPE=Release
@@ -69,6 +68,7 @@ target_link_libraries(your_target ndt_cuda::ndt_cuda)
 | `CMAKE_CUDA_ARCHITECTURES` | `75;86;87;89;90` (`75;86;87` with CUDA < 11.8) | Target GPUs. Each entry also embeds PTX, so newer GPUs JIT compile. Use `native` (CMake ≥ 3.24) to build only for the installed GPU. |
 | `NDT_CUDA_BUILD_EXAMPLES` | `ON` | `ndt_cuda_align` example |
 | `NDT_CUDA_BUILD_TESTS` | `OFF` | Validation test (downloads koide3/ndt_omp as reference) |
+| `NDT_CUDA_BUILD_GPU_TESTS` | `OFF` | Test of the real CUDA kernels, skipped when no GPU is available (downloads koide3/ndt_omp as reference) |
 | `NDT_CUDA_BUILD_BENCHMARK` | `OFF` | ndt_omp vs ndt_cuda benchmark (downloads koide3/ndt_omp) |
 | `NDT_OMP_SOURCE_DIR` | — | Use a local ndt_omp checkout instead of downloading it |
 | `NDT_CUDA_ENABLE_CUDA` | `ON` | `OFF` builds only the GPU-less tests (no CUDA toolkit needed) |
@@ -135,7 +135,8 @@ The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cu
 
 - **Hessian sign fix.** ndt_omp's float code path uses `+sin(pitch)` in row `d1` of the angular hessian (`h_ang.row(6)`), while its double path (`h_ang_d1_`) and the derivation give `-sin(pitch)`. ndt_cuda uses `-sin(pitch)`; the test verifies this against finite differences. Only the (pitch, pitch) hessian entry is affected — the optimum is the same, individual Newton steps can differ slightly.
 - `setNumThreads()` exists for compatibility and has no effect.
-- The CPU voxel grid is built without a kd-tree (not needed), so `setInputTarget()` is cheaper than ndt_omp's.
+- No kd-tree is built on the map (not needed): neither in `setInputTarget()`, nor the one `pcl::Registration` otherwise builds in the first `align()` after a target change. With a 3M point map that first `align()` takes about 2 ms instead of 680 ms.
+- Not copyable, because an instance owns its GPU state. Use a separate instance or a pointer.
 - Faithful to ndt_omp (kept on purpose so that both give the same results): the covariance accumulator starts from the identity, which adds a small `I·(n−1)/n²` regularization; `DIRECT26` excludes the voxel that contains the point.
 
 ## Validation
@@ -157,6 +158,12 @@ cmake -B build -DNDT_CUDA_BUILD_TESTS=ON && cmake --build build -j && (cd build 
 colcon build --packages-select ndt_cuda --cmake-args -DNDT_CUDA_BUILD_TESTS=ON && colcon test --packages-select ndt_cuda
 ```
 
+`test/ndt_cuda_gpu_test.cpp` runs the real CUDA kernels and reductions, which the test above and CI do not execute: `align()` against ndt_omp for all search methods (also with 300000 source points) and repeated runs being bit-identical. Run it on a machine with a GPU:
+
+```bash
+cmake -B build -DNDT_CUDA_BUILD_GPU_TESTS=ON && cmake --build build -j && (cd build && ctest --output-on-failure -R gpu)
+```
+
 ## Benchmark
 
 ```bash
@@ -167,9 +174,20 @@ cmake -B build -DNDT_CUDA_BUILD_BENCHMARK=ON && cmake --build build -j
 
 It runs ndt_omp (all CPU threads) and ndt_cuda on the same clouds and prints the time per alignment, iterations, transformation probability and the difference between the two results, and exits with a non-zero code if the results disagree.
 
+Average time per `align()` on the sample data (about 16000 source points, resolution 1 m), NVIDIA GeForce RTX 3050 Ti Laptop GPU against ndt_omp with 16 threads on an Intel Core i7-11800H:
+
+| Method | ndt_omp | ndt_cuda | Speedup |
+|---|---|---|---|
+| `KDTREE` | 20.08 ms | 0.84 ms | ×24 |
+| `DIRECT26` | 60.23 ms | 0.61 ms | ×98 |
+| `DIRECT7` | 14.54 ms | 0.68 ms | ×21 |
+| `DIRECT1` | 6.86 ms | 0.63 ms | ×11 |
+
+These numbers come from one machine and one pair of small scans; run the benchmark on your own hardware and data.
+
 ## Roadmap
 
-- Benchmark results on desktop GPUs and Jetson Orin
+- Benchmark results on other desktop GPUs and Jetson Orin
 - Voxel grid construction on the GPU (faster map updates)
 - Dynamic map loading (add / remove voxels incrementally)
 - ROS 2 component node (map + scan → pose)
@@ -185,5 +203,3 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full notices and th
 
 - M. Magnusson, *The Three-Dimensional Normal-Distributions Transform*, PhD thesis, Örebro University, 2009.
 - J. J. Moré and D. J. Thuente, *Line Search Algorithms with Guaranteed Sufficient Decrease*, ACM TOMS, 1994.
-
-This project was developed with the assistance of an AI coding assistant (Claude, Anthropic). All code is validated by the test suite described above.
