@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!-- Replaces the launch file of autoware_ndt_scan_matcher, so that Autoware starts cuda_ndt_matcher with the same
+     topics and the same parameter file. Everything else in Autoware stays the same. For the benchmark only. -->
+<launch>
+  <arg name="param_file" default="$(find-pkg-share cuda_ndt_matcher_launch)/config/cuda_scan_matcher.param.yaml"/>
+  <arg name="input_pointcloud" default="points_raw"/>
+  <arg name="input_initial_pose_topic" default="ekf_pose_with_covariance"/>
+  <arg name="input_regularization_pose_topic" default="regularization_pose_with_covariance"/>
+  <arg name="input_service_trigger_node" default="trigger_node"/>
+  <arg name="output_pose_topic" default="ndt_pose"/>
+  <arg name="output_pose_with_covariance_topic" default="ndt_pose_with_covariance"/>
+  <arg name="client_map_loader" default="pcd_loader_service"/>
+  <arg name="node_name" default="ndt_scan_matcher"/>
+  <include file="$(find-pkg-share cuda_ndt_matcher_launch)/launch/cuda_ndt_scan_matcher.launch.xml">
+    <arg name="param_file" value="$(var param_file)"/>
+    <arg name="input_pointcloud" value="$(var input_pointcloud)"/>
+    <arg name="input_initial_pose_topic" value="$(var input_initial_pose_topic)"/>
+    <arg name="input_regularization_pose_topic" value="$(var input_regularization_pose_topic)"/>
+    <arg name="input_service_trigger_node" value="$(var input_service_trigger_node)"/>
+    <arg name="output_pose_topic" value="$(var output_pose_topic)"/>
+    <arg name="output_pose_with_covariance_topic" value="$(var output_pose_with_covariance_topic)"/>
+    <arg name="client_map_loader" value="$(var client_map_loader)"/>
+    <arg name="node_name" value="$(var node_name)"/>
+  </include>
+</launch>

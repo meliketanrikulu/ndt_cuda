@@ -9,6 +9,7 @@ from rosidl_runtime_py.utilities import get_message
 import rosbag2_py
 
 PREFIX = "/localization/pose_estimator/"
+SCAN_TOPIC = "/localization/util/downsample/pointcloud"
 SCALARS = {
     "exe_time_ms": "exe_time_ms",
     "iteration_num": "iterations",
@@ -27,8 +28,13 @@ def main(output_dir):
 
     scalars = {key: [] for key in SCALARS}
     poses = []
+    scan_arrivals = {}
     while reader.has_next():
-        topic, data, _ = reader.read_next()
+        topic, data, received = reader.read_next()
+        if topic == SCAN_TOPIC:
+            stamp = deserialize_message(data, types[topic]).header.stamp
+            scan_arrivals[(stamp.sec, stamp.nanosec)] = received
+            continue
         if not topic.startswith(PREFIX):
             continue
         name = topic[len(PREFIX):]
@@ -39,7 +45,10 @@ def main(output_dir):
             p = msg.pose.pose.position
             q = msg.pose.pose.orientation
             stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-            poses.append((stamp, p.x, p.y, p.z, q.x, q.y, q.z, q.w))
+            # exe_time_ms does not cover the same work in every implementation; this does: scan in, pose out, seen by the same recorder.
+            arrival = scan_arrivals.get((msg.header.stamp.sec, msg.header.stamp.nanosec))
+            latency = (received - arrival) * 1e-6 if arrival is not None else ""
+            poses.append((stamp, p.x, p.y, p.z, q.x, q.y, q.z, q.w, latency))
 
     with open(f"{output_dir}/metrics.csv", "w", newline="") as f:
         writer = csv.writer(f)
@@ -50,7 +59,7 @@ def main(output_dir):
 
     with open(f"{output_dir}/poses.csv", "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["stamp", "x", "y", "z", "qx", "qy", "qz", "qw"])
+        writer.writerow(["stamp", "x", "y", "z", "qx", "qy", "qz", "qw", "latency_ms"])
         writer.writerows(poses)
 
 

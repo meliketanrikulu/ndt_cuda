@@ -13,6 +13,7 @@ CUDA accelerated **Normal Distributions Transform (NDT)** point cloud registrati
 - **The additions of [tier4/ndt_omp](https://github.com/tier4/ndt_omp)** — nearest voxel transformation likelihood (NVTL), `getResult()`, regularization, and `MultiGridNormalDistributionsTransformCUDA`, whose map is made of tiles that can be added and removed while running. Results match tier4/ndt_omp to about a micrometer on the sample data.
 - **All four neighbor search methods on the GPU** — `KDTREE` (exact radius search), `DIRECT26`, `DIRECT7`, `DIRECT1`.
 - **Deterministic** — double precision reduction with a fixed reduction tree: repeated runs on the same GPU give identical results.
+- **Works in Autoware** — [`integrations/autoware`](integrations/autoware) makes Autoware's `autoware_ndt_scan_matcher` use ndt_cuda without other changes. Tested with Autoware 1.5.0: 4.6 times faster than Autoware's NDT on its sample bag (see the [Autoware benchmark](docs/autoware_benchmark.md)).
 - **Modern packaging** — C++17, CUDA 11.4–12.x, default architectures Turing → Hopper incl. Jetson Orin; `find_package(ndt_cuda)` + `ndt_cuda::ndt_cuda` in plain CMake and ROS 2 (Humble, Jazzy); the CUDA runtime is linked statically (only the NVIDIA driver is needed at runtime).
 - **GPU-less validation** — the test suite runs without a GPU or CUDA toolkit, so it also runs in CI.
 
@@ -195,12 +196,15 @@ Median time per `align()` on the sample data (about 16000 source points, resolut
 
 These numbers come from one machine and one pair of small scans; run the benchmark on your own hardware and data. See the [benchmark report](docs/benchmark.md) for repeated measurements, large clouds, map updates, GPU memory and utilization, and limitations.
 
+### Autoware
+
+On Autoware's rosbag replay with its sample data, ndt_cuda turns a scan into a pose in 0.74 ms (median), against 3.4 ms for Autoware's own NDT. It finds the initial pose in 0.56 s instead of 3.1 s, with about the same poses and scores. See the [Autoware benchmark](docs/autoware_benchmark.md), which also compares it with cuda_ndt_matcher, and [`integrations/autoware`](integrations/autoware) for the setup.
+
 ## Roadmap
 
 - Benchmark results on other desktop GPUs and Jetson Orin
 - Voxel grid construction on the GPU (faster map updates)
 - Dynamic map loading (add / remove voxels incrementally)
-- ROS 2 component node (map + scan → pose)
 
 ## Acknowledgements and license
 
