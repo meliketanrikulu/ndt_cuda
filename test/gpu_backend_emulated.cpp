@@ -67,6 +67,8 @@ std::size_t GpuBackend::numSourcePoints() const {
 
 void GpuBackend::setTarget(const VoxelGridHost& g) {
   Impl& m = *impl_;
+  m.has_target = false;
+  m.voxels.clear();
   const std::size_t n = g.size();
   if (g.means.size() != 3 * n || g.icovs.size() != 6 * n || g.flags.size() != n) {
     throw std::invalid_argument("inconsistent VoxelGridHost array sizes");

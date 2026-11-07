@@ -2,7 +2,7 @@
 // Copyright (c) 2026, Melike
 //
 // Produces the measurements of docs/benchmark.md: repeated timings on the sample data and on synthetic large clouds,
-// ndt_omp thread scaling, agreement with ndt_omp, determinism and the cost of a map change.
+// ndt_omp thread scaling, agreement with ndt_omp, determinism, getFitnessScore() and the cost of a map change.
 //
 // The full run takes about 10 minutes, nearly all of it in ndt_omp on the largest clouds.
 //
@@ -188,7 +188,7 @@ static void measurePerturbedGuess(const Cloud::Ptr& target, const Cloud::Ptr& so
     gpu.align(aligned, guess);
     double dt, dr;
     transformDiff(omp.getFinalTransformation(), gpu.getFinalTransformation(), dt, dr);
-    std::printf("%-9s iters %d/%d  dt %.1f um  dr %.5f deg\n", kMethods[mode], omp.getFinalNumIteration(), gpu.getFinalNumIteration(), dt * 1e6, dr);
+    std::printf("%-9s iters %d/%d  dt %.1f um  dr %.5f deg  fitness %.6f/%.6f\n", kMethods[mode], omp.getFinalNumIteration(), gpu.getFinalNumIteration(), dt * 1e6, dr, omp.getFitnessScore(), gpu.getFitnessScore());
   }
 }
 
@@ -215,6 +215,9 @@ static void measureMapChanges(const Cloud::Ptr& target, const Cloud::Ptr& source
     const Cloud::Ptr map = repeatWithNoise(*target, n);
     NdtGpu gpu;
     measureMapChange(gpu, "ndt_cuda", map, source);
+    NdtGpu gpu_no_kdtree;
+    gpu_no_kdtree.setBuildTargetKdTree(false);
+    measureMapChange(gpu_no_kdtree, "no_kdtree", map, source);
     NdtOmp omp;
     omp.setNumThreads(omp_get_max_threads());
     measureMapChange(omp, "ndt_omp", map, source);

@@ -46,7 +46,6 @@
 #include <limits>
 
 #include <Eigen/Eigenvalues>
-#include <pcl/common/common.h>
 #include <pcl/console/print.h>
 
 #include <ndt_cuda/voxel_grid_covariance.hpp>
@@ -65,8 +64,22 @@ bool ndt_cuda::VoxelGridCovariance<PointT>::build(const pcl::PointCloud<PointT>&
   // Same float arithmetic as pcl::VoxelGrid (inverse_leaf_size_ is a float array).
   const float inverse_leaf_size = 1.0f / leaf_size_;
 
-  Eigen::Vector4f min_p, max_p;
-  pcl::getMinMax3D<PointT>(cloud, min_p, max_p);
+  // Non-finite points are skipped even if the cloud is marked as dense: they have no meaningful voxel key.
+  const auto is_finite = [](const PointT& pt) { return std::isfinite(pt.x) && std::isfinite(pt.y) && std::isfinite(pt.z); };
+
+  Eigen::Array3f min_p = Eigen::Array3f::Constant(std::numeric_limits<float>::max());
+  Eigen::Array3f max_p = Eigen::Array3f::Constant(std::numeric_limits<float>::lowest());
+  bool has_finite_point = false;
+  for (const auto& pt : cloud.points) {
+    if (!is_finite(pt)) continue;
+    const Eigen::Array3f p(pt.x, pt.y, pt.z);
+    min_p = min_p.min(p);
+    max_p = max_p.max(p);
+    has_finite_point = true;
+  }
+  if (!has_finite_point) {
+    return false;
+  }
 
   // Check that the leaf size is not too small, given the size of the data
   const std::int64_t dx = static_cast<std::int64_t>((max_p[0] - min_p[0]) * inverse_leaf_size) + 1;
@@ -88,9 +101,7 @@ bool ndt_cuda::VoxelGridCovariance<PointT>::build(const pcl::PointCloud<PointT>&
   // First pass: accumulate point sums and second moments per voxel
   leaves_.reserve(cloud.size() / 4 + 1);
   for (const auto& pt : cloud.points) {
-    if (!cloud.is_dense && !(std::isfinite(pt.x) && std::isfinite(pt.y) && std::isfinite(pt.z))) {
-      continue;
-    }
+    if (!is_finite(pt)) continue;
     const int ijk0 = static_cast<int>(std::floor(pt.x * inverse_leaf_size) - static_cast<float>(min_b_[0]));
     const int ijk1 = static_cast<int>(std::floor(pt.y * inverse_leaf_size) - static_cast<float>(min_b_[1]));
     const int ijk2 = static_cast<int>(std::floor(pt.z * inverse_leaf_size) - static_cast<float>(min_b_[2]));

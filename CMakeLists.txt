@@ -59,7 +59,7 @@ if(NDT_CUDA_ENABLE_CUDA AND CMAKE_CUDA_COMPILER)
   set(NDT_CUDA_HAVE_CUDA ON)
   message(STATUS "ndt_cuda: CUDA ${CUDAToolkit_VERSION}, architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 elseif(NDT_CUDA_ENABLE_CUDA)
-  message(WARNING "ndt_cuda: no CUDA compiler found. The library is not built (the GPU-less tests can still be built).")
+  message(FATAL_ERROR "ndt_cuda: no CUDA compiler found. Install the CUDA toolkit, or configure with -DNDT_CUDA_ENABLE_CUDA=OFF to build only the GPU-less tests.")
 endif()
 
 # ---------------------------------------------------------------------------------------------

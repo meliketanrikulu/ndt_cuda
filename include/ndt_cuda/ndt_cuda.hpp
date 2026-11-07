@@ -89,6 +89,8 @@ public:
   /** \brief Constructor.
    * \param[in] device CUDA device ordinal; -1 uses the current device.
    * \throws std::runtime_error if no CUDA capable device is available.
+   * \note Each call restores the thread's current device, which can also create a CUDA context on that device.
+   *       Use CUDA_VISIBLE_DEVICES to keep a process off the other GPUs completely.
    */
   explicit NormalDistributionsTransformCUDA(int device = -1);
 
@@ -106,9 +108,23 @@ public:
     pcl::Registration<PointSource, PointTarget>::setInputTarget(cloud);
     // pcl::Registration rejects an empty cloud and leaves target_ unchanged, so it may still be null.
     if (target_) init();
-    // The neighbor search runs on the GPU: keeps initCompute() from building its unused kd-tree over the whole map.
-    target_cloud_updated_ = false;
+    if (!build_target_kdtree_) target_cloud_updated_ = false;
   }
+
+  /** \brief Whether the first align() after a target change builds pcl::Registration's kd-tree over the map (default true, as in ndt_omp).
+   *
+   * The alignment itself does not use this tree, but pcl::Registration::getFitnessScore() does. Turning it off makes
+   * that first align() much faster on large maps.
+   * \warning While it is off, getFitnessScore() must not be used: it would read an unbuilt or outdated tree. Use
+   *          getTransformationProbability() or calculateScore() to judge an alignment instead.
+   */
+  void setBuildTargetKdTree(bool build) {
+    if (build_target_kdtree_ != build) {
+      build_target_kdtree_ = build;
+      if (target_) target_cloud_updated_ = build;
+    }
+  }
+  bool getBuildTargetKdTree() const { return build_target_kdtree_; }
 
   /** \brief Set/change the voxel grid resolution (side length of the voxels). */
   void setResolution(float resolution) {
@@ -230,6 +246,7 @@ protected:
   static Eigen::Matrix4f vectorToMatrix(const Eigen::Matrix<double, 6, 1>& x);
 
   TargetGrid target_cells_;
+  bool build_target_kdtree_ = true;
   float resolution_ = 1.0f;
   double step_size_ = 0.1;
   double outlier_ratio_ = 0.55;

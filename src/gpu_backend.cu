@@ -32,6 +32,7 @@ using namespace kernels;
   do {                                                                                             \
     cudaError_t err__ = (expr);                                                                    \
     if (err__ != cudaSuccess) {                                                                    \
+      cudaGetLastError(); /* a failed call must not be reported again by the next check */        \
       std::ostringstream oss__;                                                                    \
       oss__ << "[ndt_cuda] " << #expr << " failed at " << __FILE__ << ":" << __LINE__ << " : " \
             << cudaGetErrorString(err__);                                                          \
@@ -304,8 +305,11 @@ std::size_t GpuBackend::numSourcePoints() const {
 }
 
 void GpuBackend::setTarget(const VoxelGridHost& grid) {
-  DeviceGuard guard(impl_->device);
   Impl& m = *impl_;
+  // Stays cleared if anything below fails: the old buffers may already be freed or overwritten.
+  m.has_target = false;
+  m.num_voxels = 0;
+  DeviceGuard guard(m.device);
   const std::size_t n = grid.size();
   if (grid.means.size() != 3 * n || grid.icovs.size() != 6 * n || grid.flags.size() != n) {
     throw std::invalid_argument("[ndt_cuda] inconsistent VoxelGridHost array sizes");
@@ -365,10 +369,11 @@ void GpuBackend::setSource(const float* xyzw, std::size_t num_points) {
   if (num_points > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
     throw std::invalid_argument("[ndt_cuda] too many source points");
   }
-  m.num_source = num_points;
+  m.num_source = 0;
   if (num_points > 0) {
     m.upload(m.source, xyzw, num_points);
   }
+  m.num_source = num_points;
 }
 
 DerivativeResult GpuBackend::computeDerivatives(const DerivativeParams& params) {

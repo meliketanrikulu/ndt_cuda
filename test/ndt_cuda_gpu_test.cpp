@@ -5,7 +5,7 @@
 //   1. align() against ndt_omp, for every neighbor search method,
 //   2. the same with more source points than the kernels have threads (several points per thread),
 //   3. repeated runs are bit-identical,
-//   4. target handling (empty target, no kd-tree build on the map).
+//   4. target handling (empty and invalid targets, getFitnessScore(), optional kd-tree).
 //
 // usage: ndt_cuda_gpu_test [data_dir]      exit code 77 (reported as skipped by ctest) if no GPU is available
 
@@ -13,8 +13,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <random>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
@@ -23,6 +26,7 @@
 #include <pclomp/ndt_omp.h>
 
 #include <ndt_cuda/ndt_cuda.hpp>
+#include <ndt_cuda/voxel_grid_covariance.hpp>
 
 using PointT = pcl::PointXYZ;
 using Cloud = pcl::PointCloud<PointT>;
@@ -144,13 +148,94 @@ int main(int argc, char** argv) {
   empty.align(out);
   check(!empty.hasConverged(), "empty target as first target: align() does not converge", empty.hasConverged() ? 1.0 : 0.0, 0.0);
 
-  // initCompute() builds its kd-tree only while this flag is set.
+  // pcl::Registration::getFitnessScore() needs the kd-tree built by the first align(). A guess 3 m off gives a clearly nonzero score.
+  Eigen::Matrix4f off = Eigen::Matrix4f::Identity();
+  off(0, 3) = 3.0f;
+  for (const int iterations : {1, 35}) {
+    pclomp::NormalDistributionsTransform<PointT, PointT> omp;
+    NDT gpu;
+    pcl::Registration<PointT, PointT>* base = &gpu;
+    for (pcl::Registration<PointT, PointT>* reg : std::vector<pcl::Registration<PointT, PointT>*>{&omp, &gpu}) {
+      reg->setMaximumIterations(iterations);
+      reg->setInputTarget(target);
+      reg->setInputSource(source);
+      reg->align(out, off);
+    }
+    const double fitness_omp = omp.getFitnessScore();
+    const double error = std::fabs(base->getFitnessScore() - fitness_omp) / fitness_omp;
+    char label[128];
+    std::snprintf(label, sizeof(label), "getFitnessScore() vs ndt_omp, %d iterations, rel. error", iterations);
+    check(fitness_omp > 0.1 && error < 1e-2, label, error, 1e-2);
+  }
+
+  // The kd-tree can be turned off for faster map changes.
   struct Probe : NDT {
     bool kdtreePending() const { return this->target_cloud_updated_; }
   };
   Probe probe;
   probe.setInputTarget(target);
-  check(!probe.kdtreePending(), "no kd-tree pending after setInputTarget()", probe.kdtreePending() ? 1.0 : 0.0, 0.0);
+  check(probe.kdtreePending(), "kd-tree pending after setInputTarget() by default", probe.kdtreePending() ? 0.0 : 1.0, 0.0);
+  probe.setBuildTargetKdTree(false);
+  check(!probe.kdtreePending(), "no kd-tree pending once turned off", probe.kdtreePending() ? 1.0 : 0.0, 0.0);
+  probe.setInputTarget(target);
+  check(!probe.kdtreePending(), "no kd-tree pending after setInputTarget() while off", probe.kdtreePending() ? 1.0 : 0.0, 0.0);
+  probe.setInputSource(source);
+  probe.align(out);
+  check(probe.hasConverged(), "align() without the kd-tree converged", probe.hasConverged() ? 0.0 : 1.0, 0.0);
+  probe.setBuildTargetKdTree(true);
+  check(probe.kdtreePending(), "kd-tree pending again once turned back on", probe.kdtreePending() ? 0.0 : 1.0, 0.0);
+
+  // Non-finite points are ignored even if the cloud is wrongly marked as dense.
+  Cloud::Ptr with_nan(new Cloud(*target));
+  PointT nan_point;
+  nan_point.x = nan_point.y = nan_point.z = std::numeric_limits<float>::quiet_NaN();
+  with_nan->insert(with_nan->end(), 10, nan_point);
+  with_nan->is_dense = true;
+  NDT clean, nan_target;
+  clean.setInputTarget(target);
+  clean.setInputSource(source);
+  clean.align(out);
+  nan_target.setInputTarget(with_nan);
+  nan_target.setInputSource(source);
+  nan_target.align(out);
+  const float nan_diff = (clean.getFinalTransformation() - nan_target.getFinalTransformation()).cwiseAbs().maxCoeff();
+  check(nan_target.hasConverged() && nan_diff == 0.0f, "NaN points in a dense target: same result as without them", nan_diff, 0.0);
+
+  // A target without usable voxels must not be reported as a successful alignment.
+  Cloud::Ptr only_nan(new Cloud);
+  only_nan->insert(only_nan->end(), 10, nan_point);
+  only_nan->is_dense = true;
+  NDT no_voxels;
+  no_voxels.setInputTarget(only_nan);
+  no_voxels.setInputSource(source);
+  no_voxels.align(out);
+  check(no_voxels.getNumTargetVoxels() == 0 && !no_voxels.hasConverged(), "only NaN points in the target: align() does not converge", no_voxels.hasConverged() ? 1.0 : 0.0, 0.0);
+
+  // setResolution() after setInputTarget() rebuilds the grid.
+  NDT resolution_after, resolution_before;
+  resolution_after.setInputTarget(target);
+  resolution_after.setResolution(2.0);
+  resolution_before.setResolution(2.0);
+  resolution_before.setInputTarget(target);
+  check(resolution_after.getNumTargetVoxels() == resolution_before.getNumTargetVoxels(), "setResolution() after setInputTarget() rebuilds the grid", double(resolution_after.getNumTargetVoxels()) - double(resolution_before.getNumTargetVoxels()), 0.0);
+
+  // A failed upload must not leave the old map in use.
+  ndt_cuda::VoxelGridCovariance<PointT> cells;
+  cells.setLeafSize(1.0f);
+  cells.build(*target);
+  ndt_cuda::VoxelGridHost grid;
+  cells.exportTo(grid);
+  ndt_cuda::GpuBackend backend;
+  backend.setTarget(grid);
+  const std::size_t voxels_before = backend.numTargetVoxels();
+  grid.flags.pop_back();
+  bool threw = false;
+  try {
+    backend.setTarget(grid);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  check(voxels_before > 0 && threw && backend.numTargetVoxels() == 0, "failed setTarget() leaves no target", double(backend.numTargetVoxels()), 0.0);
 
   std::printf("\n%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
   return g_failures ? 1 : 0;

@@ -128,6 +128,15 @@ void ndt_cuda::NormalDistributionsTransformCUDA<PointSource, PointTarget>::compu
   nr_iterations_ = 0;
   converged_ = false;
 
+  // Nothing to align to: the map has no usable voxel, or uploading it failed.
+  if (backend_->numTargetVoxels() == 0) {
+    PCL_ERROR("[%s] the target has no voxels on the GPU.\n", reg_name_.c_str());
+    trans_probability_ = 0.0;
+    final_transformation_ = guess;
+    pcl::transformPointCloud(*input_, output, final_transformation_);
+    return;
+  }
+
   updateGaussParams();
 
   // The source points stay on the GPU for the whole optimization.

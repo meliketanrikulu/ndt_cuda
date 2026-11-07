@@ -71,7 +71,7 @@ target_link_libraries(your_target ndt_cuda::ndt_cuda)
 | `NDT_CUDA_BUILD_GPU_TESTS` | `OFF` | Test of the real CUDA kernels, skipped when no GPU is available (downloads koide3/ndt_omp as reference) |
 | `NDT_CUDA_BUILD_BENCHMARK` | `OFF` | ndt_omp vs ndt_cuda benchmark (downloads koide3/ndt_omp) |
 | `NDT_OMP_SOURCE_DIR` | — | Use a local ndt_omp checkout instead of downloading it |
-| `NDT_CUDA_ENABLE_CUDA` | `ON` | `OFF` builds only the GPU-less tests (no CUDA toolkit needed) |
+| `NDT_CUDA_ENABLE_CUDA` | `ON` | With `ON`, configuring fails if no CUDA compiler is found. `OFF` builds only the GPU-less tests (no CUDA toolkit needed) |
 
 ## Usage
 
@@ -135,8 +135,12 @@ The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cu
 
 - **Hessian sign fix.** ndt_omp's float code path uses `+sin(pitch)` in row `d1` of the angular hessian (`h_ang.row(6)`), while its double path (`h_ang_d1_`) and the derivation give `-sin(pitch)`. ndt_cuda uses `-sin(pitch)`; the test verifies this against finite differences. Only the (pitch, pitch) hessian entry is affected — the optimum is the same, individual Newton steps can differ slightly.
 - `setNumThreads()` exists for compatibility and has no effect.
-- No kd-tree is built on the map (not needed): neither in `setInputTarget()`, nor the one `pcl::Registration` otherwise builds in the first `align()` after a target change. With a 3M point map that first `align()` takes about 2 ms instead of 680 ms.
+- Optional kd-tree on the map. The alignment does not use it, but `pcl::Registration` builds it in the first `align()` after a target change, because `getFitnessScore()` needs it. This is on by default, as in ndt_omp. If you never call `getFitnessScore()`, `setBuildTargetKdTree(false)` makes that first `align()` much faster on large maps (see the [benchmark report](docs/benchmark.md#map-updates)); while it is off, `getFitnessScore()` must not be used.
+- `setResolution()` after `setInputTarget()` rebuilds the voxel grid right away. ndt_omp rebuilds it there only if a source cloud is already set, and otherwise keeps the old resolution.
+- Non-finite target points are always skipped, even if the cloud is wrongly marked `is_dense`.
+- `align()` reports no convergence if no voxel is available on the GPU: the map has no usable voxel, or an earlier `setInputTarget()` threw (for example, out of GPU memory). Set the target again to recover.
 - Not copyable, because an instance owns its GPU state. Use a separate instance or a pointer.
+- With several GPUs, an instance on a non-current device restores the thread's current device after each call, which can also create a CUDA context there. Use `CUDA_VISIBLE_DEVICES` to keep a process off the other GPUs completely. Only single-GPU operation has been tested.
 - Faithful to ndt_omp (kept on purpose so that both give the same results): the covariance accumulator starts from the identity, which adds a small `I·(n−1)/n²` regularization; `DIRECT26` excludes the voxel that contains the point.
 
 ## Validation
@@ -151,6 +155,7 @@ The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cu
 | `align()` vs ndt_omp, 4 search methods, identity and perturbed initial guess | ≤ 3e-6 m, ≤ 0.01° |
 | Map shifted by 47 km, scan in sensor frame | same result as unshifted (mm level, as ndt_omp) |
 | `pcl::Registration::Ptr` usage, `pclomp_compat.hpp` with and without ndt_omp | compiles and converges |
+| `getFitnessScore()` vs ndt_omp, also through `pcl::Registration*` | ≤ 1e-6 relative error |
 
 ```bash
 cmake -B build -DNDT_CUDA_BUILD_TESTS=ON && cmake --build build -j && (cd build && ctest --output-on-failure)

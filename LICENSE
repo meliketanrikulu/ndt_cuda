@@ -3,11 +3,6 @@ BSD 3-Clause License
 Copyright (c) 2026, Melike
 All rights reserved.
 
-Parts of this software are derived from the Point Cloud Library (PCL) and from
-koide3/ndt_omp. Their copyright notices and licenses are reproduced in
-THIRD_PARTY_NOTICES.md and in the headers of the derived source files, and must be
-retained in all copies or substantial portions of the software.
-
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 
