@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# GitHub hosted runners have no GPU: the jobs compile the CUDA library and run the GPU-less validation test,
+# which executes the exact kernel arithmetic on the CPU and compares it with koide3/ndt_omp.
+jobs:
+  cmake:
+    name: CMake / CUDA ${{ matrix.cuda }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cuda: "11.8.0"
+            image: nvidia/cuda:11.8.0-devel-ubuntu22.04
+          - cuda: "12.6.3"
+            image: nvidia/cuda:12.6.3-devel-ubuntu24.04
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cmake g++ git libpcl-dev libeigen3-dev
+      - name: Configure
+        run: cmake -B build -DNDT_CUDA_BUILD_TESTS=ON -DNDT_CUDA_BUILD_BENCHMARK=ON -DCMAKE_CUDA_ARCHITECTURES="75;86"
+      - name: Build
+        run: cmake --build build -j4
+      - name: Test
+        run: cd build && ctest --output-on-failure
+      - name: Install and use from another project
+        run: |
+          cmake --install build --prefix /tmp/ndt_cuda
+          mkdir -p /tmp/consumer && cd /tmp/consumer
+          printf 'cmake_minimum_required(VERSION 3.18)\nproject(c CXX)\nfind_package(ndt_cuda REQUIRED)\nadd_executable(c main.cpp)\ntarget_link_libraries(c ndt_cuda::ndt_cuda)\n' > CMakeLists.txt
+          printf '#include <ndt_cuda/pclomp_compat.hpp>\nint main() { return ndt_cuda::GpuBackend::deviceCount() < 0; }\n' > main.cpp
+          cmake -B build -DCMAKE_PREFIX_PATH=/tmp/ndt_cuda && cmake --build build && ./build/c
+
+  ros2:
+    name: ROS 2 ${{ matrix.distro }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [humble, jazzy]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, test (colcon)
+        run: docker build -f docker/${{ matrix.distro }}.Dockerfile .
+
+  tests-without-cuda:
+    name: Tests without CUDA toolkit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake g++ libpcl-dev libeigen3-dev
+      - name: Build and test
+        run: |
+          cmake -B build -DNDT_CUDA_ENABLE_CUDA=OFF -DNDT_CUDA_BUILD_TESTS=ON
+          cmake --build build -j4
+          cd build && ctest --output-on-failure

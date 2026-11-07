@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below, together with Magnusson (2009) and koide3/ndt_omp."
+title: "ndt_cuda: CUDA accelerated Normal Distributions Transform"
+authors:
+  - name: "Melike"
+version: 0.1.0
+license: BSD-3-Clause
+repository-code: "https://github.com/YOUR_GITHUB_USER/ndt_cuda"
+references:
+  - type: software
+    title: "ndt_omp"
+    authors:
+      - family-names: "Koide"
+        given-names: "Kenji"
+    repository-code: "https://github.com/koide3/ndt_omp"
+  - type: thesis
+    title: "The Three-Dimensional Normal-Distributions Transform — an Efficient Representation for Registration, Surface Analysis, and Loop Detection"
+    authors:
+      - family-names: "Magnusson"
+        given-names: "Martin"
+    institution:
+      name: "Örebro University"
+    year: 2009
+    thesis-type: "PhD thesis"
