@@ -31,11 +31,18 @@ LAUNCH_ARGS=(
   rviz:=false
 )
 
-ros2 launch autoware_launch logging_simulator.launch.xml "${LAUNCH_ARGS[@]}" > "$OUTPUT/autoware.log" 2>&1 &
+# With NSYS set, Nsight Systems records every GPU kernel and copy of every process, for gpu_trace.py. It collects
+# during the replay only and stops while Autoware still runs: a process that does not exit cleanly loses the trace
+# data it has not saved yet.
+TRACE=()
+if [[ -n "${NSYS:-}" ]]; then
+  TRACE=("$NSYS" launch --session-new=ndt_bench --trace=cuda)
+fi
+"${TRACE[@]}" ros2 launch autoware_launch logging_simulator.launch.xml "${LAUNCH_ARGS[@]}" > "$OUTPUT/autoware.log" 2>&1 &
 AUTOWARE=$!
 
 # Autoware's RViz configuration, following the vehicle as the Autoware documentation suggests. With VIDEO set, RViz
-# runs on a virtual screen that is recorded, with the text of the file OVERLAY in a corner.
+# runs on a virtual screen that is recorded; make_video.py adds the resource use afterwards.
 if [[ "$RVIZ" == "true" ]]; then
   if [[ -n "${VIDEO:-}" ]]; then
     export DISPLAY=:99
@@ -49,7 +56,16 @@ if [[ "$RVIZ" == "true" ]]; then
   rviz2 -d "$OUTPUT/view.rviz" --ros-args -p use_sim_time:=true \
     --params-file "$(ros2 pkg prefix --share sample_vehicle_description)/config/vehicle_info.param.yaml" > "$OUTPUT/rviz.log" 2>&1 &
 fi
-trap 'kill -INT $AUTOWARE 2>/dev/null; sleep 3; kill -9 $AUTOWARE 2>/dev/null; pkill -9 -f /opt/autoware 2>/dev/null' EXIT
+stop_autoware() {
+  kill -INT $AUTOWARE 2>/dev/null
+  for _ in $(seq 1 6); do
+    kill -0 $AUTOWARE 2>/dev/null || break
+    sleep 0.5
+  done
+  kill -9 $AUTOWARE 2>/dev/null
+  pkill -9 -f /opt/autoware 2>/dev/null
+}
+trap stop_autoware EXIT
 
 # Wait until the map is loaded and the scan matcher service exists.
 for _ in $(seq 1 90); do
@@ -78,15 +94,21 @@ sleep 3
 if [[ -n "${VIDEO:-}" ]]; then
   # Without a window manager, RViz is placed and sized by hand.
   xdotool search --sync --name RViz windowmove 0 0 windowsize 1920 1080 > /dev/null
+  date +%s.%N > "$OUTPUT/video_start"
   ffmpeg -hide_banner -loglevel error -y -f x11grab -framerate 30 -video_size 1920x1080 -i :99 \
-    -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf:textfile=$OVERLAY:reload=1:expansion=none:x=w-tw-20:y=20:fontsize=28:fontcolor=white:line_spacing=8:box=1:boxcolor=black@0.65:boxborderw=10" \
     -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p "$VIDEO" > "$OUTPUT/ffmpeg.log" 2>&1 &
   RECORDER=$!
+fi
+if [[ -n "${NSYS:-}" ]]; then
+  "$NSYS" start --session=ndt_bench --sample=none --cpuctxsw=none --output="$OUTPUT/gpu_trace" --force-overwrite=true
 fi
 date +%s.%N > "$OUTPUT/replay_start"
 ros2 bag play "$DATA/recordings/bags/sample-rosbag" -r "$RATE" -s sqlite3 > "$OUTPUT/play.log" 2>&1
 date +%s.%N > "$OUTPUT/replay_end"
 sleep 5
+if [[ -n "${NSYS:-}" ]]; then
+  "$NSYS" stop --session=ndt_bench > "$OUTPUT/nsys.log" 2>&1
+fi
 if [[ -n "${RECORDER:-}" ]]; then
   kill -INT "$RECORDER"
   wait "$RECORDER"

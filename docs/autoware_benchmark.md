@@ -1,6 +1,6 @@
 # Autoware benchmark
 
-Measured on 2026-11-07 with ndt_cuda at commit `5f14752`.
+Measured on 2026-11-07 with ndt_cuda at commit `5f14752`; the GPU traces on 2026-11-08.
 
 This report runs the [rosbag replay simulation](https://docs.autoware.org/main/simulation/rosbag-replay-simulation/) of Autoware 1.5.0 with three NDT scan matchers. Autoware and the replay stay the same; only the scan matcher changes.
 
@@ -14,7 +14,7 @@ In summary, on one laptop GPU and the 30 second Autoware sample bag:
 
 - **Speed:** ndt_cuda turns a scan into a pose in 0.74 ms (median), against 3.4 ms for both Autoware NDT and cuda_ndt_matcher. Its slowest scan took 1.6 ms, against 11 ms and 23 ms.
 - **Initial pose:** the search for the initial pose took 0.56 s with ndt_cuda, 1.6 s with cuda_ndt_matcher and 3.1 s with Autoware NDT.
-- **Resources:** while tracking, ndt_cuda used 82 ms of CPU time per second of bag time, against 205 ms for Autoware NDT and 94 ms for cuda_ndt_matcher. It used 86 MiB of video memory, against 404 MiB for cuda_ndt_matcher.
+- **Resources:** while tracking, ndt_cuda used 82 ms of CPU time per second of bag time, against 205 ms for Autoware NDT and 94 ms for cuda_ndt_matcher. It kept the GPU busy for 3.0 ms per second of bag time (0.3% of the GPU in real time), against 28 ms for cuda_ndt_matcher, and used 86 MiB of video memory, against 404 MiB.
 - **Results:** all three keep localized through the whole bag. Their poses differ from Autoware NDT by a median of about 4 mm. Repeated runs of Autoware NDT itself differ by up to 50 mm, because the replay is not deterministic.
 
 ![Summary](images/autoware/summary.png)
@@ -29,7 +29,7 @@ In summary, on one laptop GPU and the 30 second Autoware sample bag:
 | Data | Autoware's sample map (326867 points) and sample rosbag (30 s, 3 Velodyne lidars), as in the Autoware documentation |
 | Replay | `ros2 bag play -r 0.2`, as in the Autoware documentation |
 | NDT parameters | Autoware's defaults for all three: resolution 2 m, at most 30 iterations, transformation epsilon 0.01, no line search, 200 particles for the initial pose |
-| Runs | 3 per scan matcher, interleaved, without RViz |
+| Runs | 3 per scan matcher, interleaved, without RViz, and one more per GPU version with Nsight Systems for the GPU use |
 
 Two changes from the documented replay keep the measurements about the scan matcher:
 
@@ -55,6 +55,8 @@ All values combine the 3 runs. "Scan to pose" is the time from the scan matcher'
 | NVTL, lowest (threshold 2.3) | 2.882 | 2.870 | 2.903 |
 | CPU while tracking (ms per second of bag time) | 205 | **82** | 94 |
 | CPU peak during the initial pose search (%, 100 = one core) | 403 | 97 | 101 |
+| GPU while tracking (ms per second of bag time) | 0 | **3.0** | 28.4 |
+| GPU time of the initial pose search (ms) | 0 | **356** | 1333 |
 | Video memory (MiB) | 0 | 86 | 404 |
 | Resident memory (MiB) | 68 | 229 | 448 |
 
@@ -70,11 +72,13 @@ ndt_cuda is the fastest on every scan. The steps at about 10 s are where the veh
 
 ### CPU and GPU use
 
-The figure shows the first run of each. The peak at the start is the initial pose search. Autoware NDT uses its 4 threads there; the GPU versions use the GPU. While tracking, the scan matcher uses little CPU in all three because the bag plays at 0.2x: scans arrive at 2 Hz instead of 10 Hz. The table therefore gives the CPU time per second of bag time, which is what a real-time run needs.
+The figure shows the first run of each for CPU and video memory, and the traced run for the GPU. The peak at the start is the initial pose search. Autoware NDT uses its 4 threads there; the GPU versions use the GPU. While tracking, the scan matcher uses little CPU and GPU in all three because the bag plays at 0.2x: scans arrive at 2 Hz instead of 10 Hz. The table therefore gives the CPU and GPU time per second of bag time, which is what a real-time run needs.
 
 ![CPU, GPU and video memory over time](images/autoware/resources.png)
 
-GPU utilization is that of the whole GPU, sampled about every 1.5 s by `nvidia-smi`. A 0.7 ms alignment twice a second rarely shows in these samples, so the GPU line of ndt_cuda stays near 0 while tracking.
+The GPU use is the time the GPU spent on the kernels and copies of the scan matcher process, from a [Nsight Systems](https://developer.nvidia.com/nsight-systems) trace ([`gpu_trace.py`](../benchmark/autoware/gpu_trace.py)), averaged over 1 s. `nvidia-smi` reports whole percents and shows both GPU versions as 0 while tracking. While tracking, ndt_cuda keeps the GPU busy for about 0.3 ms per scan, which in real time is 0.3% of the GPU; cuda_ndt_matcher needs about 2.8 ms per scan, 2.8%. The step of ndt_cuda at about 60 s is where the vehicle starts moving.
+
+The trace adds a little to the time per scan: the median scan-to-pose time of the traced runs was 0.78 ms for ndt_cuda and 3.53 ms for cuda_ndt_matcher, against 0.74 ms and 3.41 ms without the trace. The other values in the table come from the runs without the trace.
 
 ### Agreement with Autoware NDT
 
@@ -103,7 +107,11 @@ The scripts are in [`benchmark/autoware`](../benchmark/autoware). They expect th
 bash benchmark/autoware/run_benchmark.sh builtin run1        # Autoware NDT
 bash benchmark/autoware/run_benchmark.sh ndt_cuda run1       # ndt_cuda
 bash benchmark/autoware/run_benchmark.sh cuda_ndt_matcher run1
+GPU_TRACE=1 bash benchmark/autoware/run_benchmark.sh ndt_cuda trace          # GPU use, with Nsight Systems
+GPU_TRACE=1 bash benchmark/autoware/run_benchmark.sh cuda_ndt_matcher trace
 python3 benchmark/autoware/make_report.py ~/projects/autoware_bench/results docs/images/autoware run1,run2,run3
 ```
 
-`record_demo.sh` records a run with RViz on a virtual screen, with the CPU, GPU and video memory use of the scan matcher in a corner. It replays the bag in real time (`RATE=1.0`), so the corner shows the use of a real run; the GPU column is the average of the last 3 seconds. RViz renders on the CPU there, so its runs are only for viewing, not for measurements.
+`GPU_TRACE=1` mounts Nsight Systems of the host (`NSYS_DIR`, by default `/opt/nvidia/nsight-systems/2024.6.2`) into the container, as the Autoware image does not have it.
+
+`record_demo.sh` records a run with RViz on a virtual screen and then writes the CPU, GPU and video memory use of the scan matcher into a corner ([`make_video.py`](../benchmark/autoware/make_video.py)). It replays the bag in real time (`RATE=1.0`), so the corner shows the use of a real run; the GPU column comes from a Nsight Systems trace and is the busy share of the last second. The trace takes some video memory in the traced process, so the videos show about 30 MiB more than the table. RViz renders on the CPU there, so its runs are only for viewing, not for measurements.
