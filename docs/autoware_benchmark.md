@@ -19,6 +19,14 @@ In summary, on one laptop GPU and the 30 second Autoware sample bag:
 
 ![Summary](images/autoware/summary.png)
 
+## Videos
+
+The replay in RViz with each scan matcher, in real time. The corner shows the CPU, GPU and video memory use of the scan matcher process, with the GPU use from a Nsight Systems trace (see [Reproducing](#reproducing)).
+
+| Autoware NDT (CPU) | ndt_cuda (GPU) | cuda_ndt_matcher (GPU) |
+| --- | --- | --- |
+| [![Autoware NDT](https://img.youtube.com/vi/rLagbqTeKkw/hqdefault.jpg)](https://www.youtube.com/watch?v=rLagbqTeKkw) | [![ndt_cuda](https://img.youtube.com/vi/kFiMxRVmHps/hqdefault.jpg)](https://www.youtube.com/watch?v=kFiMxRVmHps) | [![cuda_ndt_matcher](https://img.youtube.com/vi/LoozwITNJkc/hqdefault.jpg)](https://www.youtube.com/watch?v=LoozwITNJkc) |
+
 ## Test setup
 
 | Component | Value |
