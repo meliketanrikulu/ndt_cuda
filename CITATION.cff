@@ -4,7 +4,9 @@ title: "ndt_cuda: CUDA accelerated Normal Distributions Transform"
 authors:
   - name: "Melike"
 version: 0.1.0
-license: BSD-3-Clause
+license:
+  - BSD-3-Clause
+  - Apache-2.0  # multigrid_ndt_cuda.hpp, impl/multigrid_ndt_cuda.hpp, ndt_struct.hpp
 repository-code: "https://github.com/meliketanrikulu/ndt_cuda"
 references:
   - type: software

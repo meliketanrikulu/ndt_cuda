@@ -204,15 +204,15 @@ On Autoware's rosbag replay with its sample data, ndt_cuda turns a scan into a p
 
 - Benchmark results on other desktop GPUs and Jetson Orin
 - Voxel grid construction on the GPU (faster map updates)
-- Dynamic map loading (add / remove voxels incrementally)
+- Incremental map updates on the GPU (today every change of the map tiles uploads all loaded tiles again)
 
 ## Acknowledgements and license
 
-ndt_cuda is released under the [BSD 3-Clause License](LICENSE). It is a derivative work of:
+ndt_cuda is released under the [BSD 3-Clause License](LICENSE), except for three files under the Apache License 2.0 (see below). It is a derivative work of:
 
 - **PCL** `NormalDistributionsTransform` and `VoxelGridCovariance` — BSD 3-Clause, © Willow Garage, Inc. and Open Perception, Inc.; NDT implementation by Brian Okorn, math refactored by Todor Stoyanov.
 - **[koide3/ndt_omp](https://github.com/koide3/ndt_omp)** — BSD 2-Clause, © 2019 Kenji Koide. The API, the neighbor search methods, the float derivative formulation and the sample data come from ndt_omp.
-- **[tier4/ndt_omp](https://github.com/tier4/ndt_omp)** — a fork of ndt_omp under the same license. The multi-tile interface, NVTL, `getResult()` and regularization come from this fork.
+- **[tier4/ndt_omp](https://github.com/tier4/ndt_omp)** — a fork of ndt_omp. NVTL, `getResult()` and regularization come from its BSD-licensed files. The multi-tile NDT comes from its files under the Apache License 2.0, © TIER IV, Inc.; the three files derived from them (`multigrid_ndt_cuda.hpp`, `impl/multigrid_ndt_cuda.hpp`, `ndt_struct.hpp`) are under the Apache License 2.0 too.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full notices and the list of derived files. Algorithm references:
 

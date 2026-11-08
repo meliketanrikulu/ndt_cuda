@@ -4,3 +4,4 @@ log/
 .vscode/
 .idea/
 *.swp
+__pycache__/

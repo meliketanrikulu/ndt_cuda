@@ -11,6 +11,7 @@
 
   <maintainer email="melike.153t@gmail.com">Melike</maintainer>
   <license>BSD-3-Clause</license>
+  <license>Apache-2.0</license>  <!-- multigrid_ndt_cuda.hpp, impl/multigrid_ndt_cuda.hpp, ndt_struct.hpp -->
 
   <url type="repository">https://github.com/meliketanrikulu/ndt_cuda</url>
   <url type="bugtracker">https://github.com/meliketanrikulu/ndt_cuda/issues</url>
