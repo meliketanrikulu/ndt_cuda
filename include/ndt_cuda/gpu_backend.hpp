@@ -104,6 +104,10 @@ public:
   /** \brief Uploads the voxel grid and builds the GPU hash table. */
   void setTarget(const VoxelGridHost& grid);
 
+  /** \brief Uses the map that `other` uploaded, without a copy: uploaded maps never change, so they can be shared.
+   *  \return false (nothing changed) if `other` uses another device. */
+  bool shareTarget(const GpuBackend& other);
+
   /** \brief Uploads the source points, packed as x, y, z, (unused) per point. */
   void setSource(const float* xyzw, std::size_t num_points);
 

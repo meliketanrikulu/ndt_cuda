@@ -128,6 +128,22 @@ void GpuBackend::setTarget(const VoxelGridHost& g) {
   m.has_target = true;
 }
 
+bool GpuBackend::shareTarget(const GpuBackend& other) {
+  // The emulation copies the map. The real backend shares the device buffers.
+  const Impl& o = *other.impl_;
+  Impl& m = *impl_;
+  m.slot_keys = o.slot_keys;
+  m.slot_values = o.slot_values;
+  m.voxels = o.voxels;
+  m.grid = o.grid;
+  for (int d = 0; d < 3; d++) m.origin[d] = o.origin[d];
+  m.grid.slot_keys = m.slot_keys.data();
+  m.grid.slot_values = m.slot_values.data();
+  m.grid.voxels = m.voxels.data();
+  m.has_target = o.has_target;
+  return true;
+}
+
 void GpuBackend::setSource(const float* xyzw, std::size_t num_points) {
   impl_->source.resize(num_points);
   if (num_points) std::memcpy(impl_->source.data(), xyzw, num_points * sizeof(float4));

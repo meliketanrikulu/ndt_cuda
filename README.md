@@ -142,7 +142,7 @@ The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cu
 - `setResolution()` after `setInputTarget()` rebuilds the voxel grid right away. ndt_omp rebuilds it there only if a source cloud is already set, and otherwise keeps the old resolution.
 - Non-finite target points are always skipped, even if the cloud is wrongly marked `is_dense`.
 - `align()` reports no convergence if no voxel is available on the GPU: the map has no usable voxel, or an earlier `setInputTarget()` threw (for example, out of GPU memory). Set the target again to recover.
-- A copy has its own GPU state and uploads the map to it when first needed.
+- A copy has its own CUDA stream and scratch buffers, and shares the map that the original uploaded. An uploaded map never changes (a new target makes new buffers), so a copy needs no upload.
 - With several GPUs, an instance on a non-current device restores the thread's current device after each call, which can also create a CUDA context there. Use `CUDA_VISIBLE_DEVICES` to keep a process off the other GPUs completely. Only single-GPU operation has been tested.
 - Faithful to ndt_omp (kept on purpose so that both give the same results): the covariance accumulator starts from the identity, which adds a small `I·(n−1)/n²` regularization; `DIRECT26` excludes the voxel that contains the point.
 

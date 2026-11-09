@@ -27,6 +27,6 @@ To go back to the CPU, restore the package from git (`git checkout -- .` in `aut
 ## Differences from Autoware's NDT
 
 - `ndt.num_threads` has no effect on the alignment, which runs on the GPU.
-- Map tiles are merged and uploaded to the GPU again at each map update. Autoware loads tiles in a background thread, so this does not delay the alignment.
+- Map tiles are merged and uploaded to the GPU again at each map update, in Autoware's map update thread. The copy that Autoware swaps in shares the uploaded map, so the alignment does no upload.
 - The results are not bit-identical: the GPU computes in single precision, and ndt_cuda corrects the sign of one hessian term. See the README of ndt_cuda.
 - The node needs an NVIDIA GPU; without one it stops at startup.
