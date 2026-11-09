@@ -181,6 +181,7 @@ public:
     capacity_ = 0;
   }
   T* get() const { return ptr_; }
+  std::size_t capacity() const { return capacity_; }
 
 private:
   T* ptr_ = nullptr;
@@ -208,6 +209,7 @@ public:
     capacity_ = 0;
   }
   T* get() const { return ptr_; }
+  std::size_t capacity() const { return capacity_; }
 
 private:
   T* ptr_ = nullptr;
@@ -244,14 +246,33 @@ int numBlocksFor(int num_points) {
 // GpuBackend
 // ---------------------------------------------------------------------------------------------
 
+/** \brief Device buffers of one uploaded map. They never change after the upload: setTarget() makes new ones. So
+ *  copies of a GpuBackend can share them, and a copy needs no upload (shareTarget()). Freed by the last owner. */
+struct TargetBuffers {
+  explicit TargetBuffers(int device) : device(device) {}
+  ~TargetBuffers() {
+    int previous = -1;
+    const bool switched = cudaGetDevice(&previous) == cudaSuccess && previous != device && cudaSetDevice(device) == cudaSuccess;
+    slot_keys.release();
+    slot_values.release();
+    voxels.release();
+    if (switched) cudaSetDevice(previous);
+  }
+  TargetBuffers(const TargetBuffers&) = delete;
+  TargetBuffers& operator=(const TargetBuffers&) = delete;
+
+  int device;
+  DeviceBuffer<int32_t> slot_keys;
+  DeviceBuffer<uint32_t> slot_values;
+  DeviceBuffer<DeviceVoxel> voxels;
+};
+
 struct GpuBackend::Impl {
   int device = 0;
   cudaStream_t stream = nullptr;
 
-  // target
-  DeviceBuffer<int32_t> slot_keys;
-  DeviceBuffer<uint32_t> slot_values;
-  DeviceBuffer<DeviceVoxel> voxels;
+  // target: the buffers are shared between copies, grid holds pointers into them
+  std::shared_ptr<const TargetBuffers> target_buffers;
   std::size_t num_voxels = 0;
   GridView grid{};
   double origin[3] = {0.0, 0.0, 0.0};
@@ -313,6 +334,8 @@ GpuBackend::GpuBackend(int device) : impl_(new Impl) {
   impl_->device = device;
   DeviceGuard guard(device);
   NDT_CUDA_CHECK(cudaStreamCreateWithFlags(&impl_->stream, cudaStreamNonBlocking));
+  // Allocate the reduction buffers now, in the constructing thread, not in the first evaluation.
+  impl_->ensureScratch(kMaxBlocks, kNumDerivativeValues);
 }
 
 GpuBackend::~GpuBackend() {
@@ -378,24 +401,48 @@ void GpuBackend::setTarget(const VoxelGridHost& grid) {
   bool unique_keys = true;
   const std::size_t capacity = buildHashTable(grid.keys, grid.flags, slot_keys, slot_values, unique_keys);
 
-  m.slot_keys.reserve(capacity);
-  m.slot_values.reserve(capacity);
-  m.voxels.reserve(std::max<std::size_t>(n, 1));
-  NDT_CUDA_CHECK(cudaMemcpyAsync(m.slot_keys.get(), slot_keys.data(), capacity * sizeof(int32_t), cudaMemcpyHostToDevice, m.stream));
-  NDT_CUDA_CHECK(cudaMemcpyAsync(m.slot_values.get(), slot_values.data(), capacity * sizeof(uint32_t), cudaMemcpyHostToDevice, m.stream));
+  // New buffers for every map: the previous ones may be shared with copies that still align against them.
+  auto buffers = std::make_shared<TargetBuffers>(m.device);
+  buffers->slot_keys.reserve(capacity);
+  buffers->slot_values.reserve(capacity);
+  buffers->voxels.reserve(std::max<std::size_t>(n, 1));
+  NDT_CUDA_CHECK(cudaMemcpyAsync(buffers->slot_keys.get(), slot_keys.data(), capacity * sizeof(int32_t), cudaMemcpyHostToDevice, m.stream));
+  NDT_CUDA_CHECK(cudaMemcpyAsync(buffers->slot_values.get(), slot_values.data(), capacity * sizeof(uint32_t), cudaMemcpyHostToDevice, m.stream));
   if (n > 0) {
-    NDT_CUDA_CHECK(cudaMemcpyAsync(m.voxels.get(), voxels.data(), n * sizeof(DeviceVoxel), cudaMemcpyHostToDevice, m.stream));
+    NDT_CUDA_CHECK(cudaMemcpyAsync(buffers->voxels.get(), voxels.data(), n * sizeof(DeviceVoxel), cudaMemcpyHostToDevice, m.stream));
   }
   // The host vectors go out of scope at return, so wait for the copies.
   NDT_CUDA_CHECK(cudaStreamSynchronize(m.stream));
 
-  m.grid.slot_keys = m.slot_keys.get();
-  m.grid.slot_values = m.slot_values.get();
-  m.grid.voxels = m.voxels.get();
+  m.grid.slot_keys = buffers->slot_keys.get();
+  m.grid.slot_values = buffers->slot_values.get();
+  m.grid.voxels = buffers->voxels.get();
+  m.target_buffers = std::move(buffers);
   m.grid.slot_mask = static_cast<uint32_t>(capacity - 1);
   m.grid.unique_keys = unique_keys;
   m.num_voxels = n;
   m.has_target = true;
+}
+
+bool GpuBackend::shareTarget(const GpuBackend& other) {
+  const Impl& o = *other.impl_;
+  Impl& m = *impl_;
+  if (o.device != m.device) {
+    return false;
+  }
+  m.target_buffers = o.target_buffers;
+  m.num_voxels = o.num_voxels;
+  m.grid = o.grid;
+  for (int d = 0; d < 3; d++) m.origin[d] = o.origin[d];
+  m.has_target = o.has_target;
+  // Size the point buffers like other's, so the first align() of a copy allocates nothing.
+  constexpr std::size_t kDefaultPoints = 1 << 15;
+  const std::size_t points = std::max(o.source.capacity(), kDefaultPoints);
+  m.source.reserve(points);
+  m.host_staging.reserve(std::max(o.host_staging.capacity(), points));
+  m.score_points.reserve(std::max(o.score_points.capacity(), points));
+  m.nearest_scores.reserve(std::max(o.nearest_scores.capacity(), points));
+  return true;
 }
 
 void GpuBackend::setSource(const float* xyzw, std::size_t num_points) {

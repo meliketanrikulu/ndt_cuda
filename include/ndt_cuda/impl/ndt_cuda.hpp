@@ -91,7 +91,9 @@ ndt_cuda::NormalDistributionsTransformCUDA<PointSource, PointTarget>::NormalDist
   transform_probability_array_(other.transform_probability_array_),
   nearest_voxel_transformation_likelihood_array_(other.nearest_voxel_transformation_likelihood_array_),
   backend_(std::make_unique<GpuBackend>(other.backend_->device())),
-  target_upload_pending_(other.target_ != nullptr) {}
+  // Share the map that other uploaded: no upload, and in particular none in the first align() of the copy.
+  target_upload_pending_(other.target_ != nullptr &&
+                         (other.target_upload_pending_ || other.backend_->numTargetVoxels() == 0 || !backend_->shareTarget(*other.backend_))) {}
 
 template <typename PointSource, typename PointTarget>
 ndt_cuda::NormalDistributionsTransformCUDA<PointSource, PointTarget>& ndt_cuda::NormalDistributionsTransformCUDA<PointSource, PointTarget>::operator=(const NormalDistributionsTransformCUDA& other) {
@@ -119,7 +121,9 @@ ndt_cuda::NormalDistributionsTransformCUDA<PointSource, PointTarget>& ndt_cuda::
   transform_probability_array_ = other.transform_probability_array_;
   nearest_voxel_transformation_likelihood_array_ = other.nearest_voxel_transformation_likelihood_array_;
   backend_ = std::make_unique<GpuBackend>(other.backend_->device());
-  target_upload_pending_ = other.target_ != nullptr;
+  // Share the map that other uploaded: no upload, and in particular none in the first align() of the copy.
+  target_upload_pending_ = other.target_ != nullptr &&
+                           (other.target_upload_pending_ || other.backend_->numTargetVoxels() == 0 || !backend_->shareTarget(*other.backend_));
   return *this;
 }
 

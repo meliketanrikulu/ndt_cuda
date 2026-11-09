@@ -99,7 +99,8 @@ public:
 
   ~NormalDistributionsTransformCUDA() override;
 
-  /** \brief A copy has its own GPU state. The map is uploaded to it when it is first needed. */
+  /** \brief A copy has its own CUDA stream and scratch buffers and shares the uploaded map of `other`, so its first align()
+   *  does no upload. If `other` has not uploaded its map yet, the copy uploads it when it is first needed. */
   NormalDistributionsTransformCUDA(const NormalDistributionsTransformCUDA& other);
   NormalDistributionsTransformCUDA& operator=(const NormalDistributionsTransformCUDA& other);
 
