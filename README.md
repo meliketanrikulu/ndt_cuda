@@ -30,6 +30,8 @@ CUDA accelerated **Normal Distributions Transform (NDT)** point cloud registrati
 
 ## Build
 
+The library is the package in the directory [`ndt_cuda`](ndt_cuda) of this repository.
+
 ### ROS 2
 
 ```bash
@@ -53,7 +55,7 @@ target_link_libraries(your_node ndt_cuda::ndt_cuda)
 ### Plain CMake
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S ndt_cuda -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 sudo cmake --install build        # optional
 ```
@@ -132,7 +134,7 @@ Code that holds the registration as `pcl::Registration<PointT, PointT>::Ptr` (e.
 | Every score / gradient / hessian evaluation: transform all source points, look up neighbor voxels, accumulate Eq. 6.9–6.13 [Magnusson 2009] | **GPU** — one thread per point, per-block warp-shuffle reduction, fixed-order final reduction in double precision |
 | 6×6 Newton solve and More-Thuente line search | CPU (unchanged from PCL / ndt_omp) |
 
-The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cuh) as `__host__ __device__` functions, shared by the kernels and by the CPU emulation used in the tests.
+The per-point math lives in [`ndt_cuda/src/ndt_cuda_kernels.cuh`](ndt_cuda/src/ndt_cuda_kernels.cuh) as `__host__ __device__` functions, shared by the kernels and by the CPU emulation used in the tests.
 
 ## Differences from ndt_omp
 
@@ -148,7 +150,7 @@ The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cu
 
 ## Validation
 
-`test/ndt_cuda_test.cpp` checks the GPU implementation **without a GPU**: it links `NormalDistributionsTransformCUDA` against a CPU emulation of the backend ([`test/gpu_backend_emulated.cpp`](test/gpu_backend_emulated.cpp)) that runs the exact kernel code and reproduces the GPU data layout. koide3/ndt_omp is downloaded at a pinned commit and used as reference.
+`ndt_cuda/test/ndt_cuda_test.cpp` checks the GPU implementation **without a GPU**: it links `NormalDistributionsTransformCUDA` against a CPU emulation of the backend ([`ndt_cuda/test/gpu_backend_emulated.cpp`](ndt_cuda/test/gpu_backend_emulated.cpp)) that runs the exact kernel code and reproduces the GPU data layout. koide3/ndt_omp is downloaded at a pinned commit and used as reference.
 
 | Check | Result on the sample data |
 |---|---|
@@ -162,24 +164,24 @@ The per-point math lives in [`src/ndt_cuda_kernels.cuh`](src/ndt_cuda_kernels.cu
 | Multi-tile NDT vs tier4/ndt_omp with Autoware's default parameters: tiles, copies, regularization, NVTL | same iteration counts, poses within about 1 µm, scores within 1e-3 |
 
 ```bash
-cmake -B build -DNDT_CUDA_BUILD_TESTS=ON && cmake --build build -j && (cd build && ctest --output-on-failure)
+cmake -S ndt_cuda -B build -DNDT_CUDA_BUILD_TESTS=ON && cmake --build build -j && (cd build && ctest --output-on-failure)
 # ROS 2:
 colcon build --packages-select ndt_cuda --cmake-args -DNDT_CUDA_BUILD_TESTS=ON && colcon test --packages-select ndt_cuda
 ```
 
-`test/ndt_cuda_multigrid_test.cpp` makes the tier4/ndt_omp comparison. It also needs no GPU, and it runs on the real kernels as `ndt_cuda_multigrid_gpu_test`.
+`ndt_cuda/test/ndt_cuda_multigrid_test.cpp` makes the tier4/ndt_omp comparison. It also needs no GPU, and it runs on the real kernels as `ndt_cuda_multigrid_gpu_test`.
 
-`test/ndt_cuda_gpu_test.cpp` runs the real CUDA kernels and reductions, which the test above and CI do not execute: `align()` against ndt_omp for all search methods (also with 300000 source points) and repeated runs being bit-identical. Run it on a machine with a GPU:
+`ndt_cuda/test/ndt_cuda_gpu_test.cpp` runs the real CUDA kernels and reductions, which the test above and CI do not execute: `align()` against ndt_omp for all search methods (also with 300000 source points) and repeated runs being bit-identical. Run it on a machine with a GPU:
 
 ```bash
-cmake -B build -DNDT_CUDA_BUILD_GPU_TESTS=ON && cmake --build build -j && (cd build && ctest --output-on-failure -R gpu)
+cmake -S ndt_cuda -B build -DNDT_CUDA_BUILD_GPU_TESTS=ON && cmake --build build -j && (cd build && ctest --output-on-failure -R gpu)
 ```
 
 ## Benchmark
 
 ```bash
-cmake -B build -DNDT_CUDA_BUILD_BENCHMARK=ON && cmake --build build -j
-./build/ndt_cuda_benchmark                              # data/*.pcd, all search methods
+cmake -S ndt_cuda -B build -DNDT_CUDA_BUILD_BENCHMARK=ON && cmake --build build -j
+./build/ndt_cuda_benchmark                              # ndt_cuda/data/*.pcd, all search methods
 ./build/ndt_cuda_benchmark target.pcd source.pcd 2.0    # your own clouds and resolution
 ```
 

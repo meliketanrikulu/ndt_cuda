@@ -6,12 +6,12 @@ code derived from these projects; each of them keeps the original copyright noti
 
 | File | Derived from |
 |---|---|
-| `include/ndt_cuda/ndt_cuda.hpp`, `include/ndt_cuda/impl/ndt_cuda.hpp` | PCL `pcl/registration/ndt.h` (optimizer, More-Thuente line search) via ndt_omp `ndt_omp.h` / `ndt_omp_impl.hpp` |
-| `include/ndt_cuda/voxel_grid_covariance.hpp`, `include/ndt_cuda/impl/voxel_grid_covariance.hpp` | PCL `pcl/filters/voxel_grid_covariance.h` (voxel statistics) via ndt_omp `voxel_grid_covariance_omp*.h` |
-| `include/ndt_cuda/angle_derivatives.hpp`, `src/ndt_cuda_kernels.cuh` | PCL / ndt_omp derivative computation (`computeAngleDerivatives`, `computePointDerivatives`, `updateDerivatives`) |
-| `include/ndt_cuda/multigrid_ndt_cuda.hpp`, `include/ndt_cuda/impl/multigrid_ndt_cuda.hpp`, `include/ndt_cuda/ndt_struct.hpp` | tier4/ndt_omp `multigrid_ndt_omp.h`, `multigrid_ndt_omp_impl.hpp`, `ndt_struct.hpp` (Apache License 2.0, © TIER IV, Inc.). **These three files are under the Apache License 2.0**, not under the BSD license of the rest of ndt_cuda. |
-| The NVTL, `getResult()` and regularization parts of `include/ndt_cuda/ndt_cuda.hpp`, `include/ndt_cuda/impl/ndt_cuda.hpp` and `src/ndt_cuda_kernels.cuh` | tier4/ndt_omp `ndt_omp.h`, `ndt_omp_impl.hpp` (BSD, as PCL and koide3/ndt_omp) |
-| `data/251370668.pcd`, `data/251371071.pcd` | Sample scans shipped with ndt_omp |
+| `ndt_cuda/include/ndt_cuda/ndt_cuda.hpp`, `ndt_cuda/include/ndt_cuda/impl/ndt_cuda.hpp` | PCL `pcl/registration/ndt.h` (optimizer, More-Thuente line search) via ndt_omp `ndt_omp.h` / `ndt_omp_impl.hpp` |
+| `ndt_cuda/include/ndt_cuda/voxel_grid_covariance.hpp`, `ndt_cuda/include/ndt_cuda/impl/voxel_grid_covariance.hpp` | PCL `pcl/filters/voxel_grid_covariance.h` (voxel statistics) via ndt_omp `voxel_grid_covariance_omp*.h` |
+| `ndt_cuda/include/ndt_cuda/angle_derivatives.hpp`, `ndt_cuda/src/ndt_cuda_kernels.cuh` | PCL / ndt_omp derivative computation (`computeAngleDerivatives`, `computePointDerivatives`, `updateDerivatives`) |
+| `ndt_cuda/include/ndt_cuda/multigrid_ndt_cuda.hpp`, `ndt_cuda/include/ndt_cuda/impl/multigrid_ndt_cuda.hpp`, `ndt_cuda/include/ndt_cuda/ndt_struct.hpp` | tier4/ndt_omp `multigrid_ndt_omp.h`, `multigrid_ndt_omp_impl.hpp`, `ndt_struct.hpp` (Apache License 2.0, © TIER IV, Inc.). **These three files are under the Apache License 2.0**, not under the BSD license of the rest of ndt_cuda. |
+| The NVTL, `getResult()` and regularization parts of `ndt_cuda/include/ndt_cuda/ndt_cuda.hpp`, `ndt_cuda/include/ndt_cuda/impl/ndt_cuda.hpp` and `ndt_cuda/src/ndt_cuda_kernels.cuh` | tier4/ndt_omp `ndt_omp.h`, `ndt_omp_impl.hpp` (BSD, as PCL and koide3/ndt_omp) |
+| `ndt_cuda/data/251370668.pcd`, `ndt_cuda/data/251371071.pcd` | Sample scans shipped with ndt_omp |
 
 The algorithm itself is described in:
 
