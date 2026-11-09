@@ -17,7 +17,7 @@ install(TARGETS ${PROJECT_NAME}
 pluginlib_export_plugin_description_file(autoware_ndt_scan_matcher_common plugins.xml)
 
 if(BUILD_TESTING)
-  # pluginlib loads the backends "ndt_cuda" and "omp" here. The test does not link them.
+  # pluginlib loads the backends "ndt_cuda" and "ndt_omp" here. The test does not link them.
   ament_auto_add_gtest(test_ndt_cuda_backend
     test/test_ndt_cuda_backend.cpp
   )

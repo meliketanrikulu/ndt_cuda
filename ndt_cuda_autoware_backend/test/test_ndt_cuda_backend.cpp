@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // The backend "ndt_cuda" must work as the interface requires, and its results must agree with the
-// backend "omp" of autoware_ndt_scan_matcher. The tests need a CUDA device. Without one, they are
+// backend "ndt_omp" of autoware_ndt_scan_matcher. The tests need a CUDA device. Without one, they are
 // skipped.
 
 #include <Eigen/Geometry>
@@ -139,7 +139,7 @@ TEST(NdtCudaBackend, AlignAgreesWithTheOmpBackend)
 {
   const NdtBackend::SharedPtr cuda = make_backend_with_map("ndt_cuda");
   SKIP_WITHOUT_GPU(cuda);
-  const NdtBackend::SharedPtr omp = make_backend_with_map("omp");
+  const NdtBackend::SharedPtr omp = make_backend_with_map("ndt_omp");
   ASSERT_NE(omp, nullptr);
 
   for (const bool regularization : {false, true}) {
@@ -184,7 +184,7 @@ TEST(NdtCudaBackend, ScoreFunctionsAgreeWithTheOmpBackend)
 {
   const NdtBackend::SharedPtr cuda = make_backend_with_map("ndt_cuda");
   SKIP_WITHOUT_GPU(cuda);
-  const NdtBackend::SharedPtr omp = make_backend_with_map("omp");
+  const NdtBackend::SharedPtr omp = make_backend_with_map("ndt_omp");
   ASSERT_NE(omp, nullptr);
 
   // Some points of this cloud have no voxel near them.

@@ -36,7 +36,7 @@ At startup, the node writes `NDT backend: ndt_cuda` to its log. If the computer 
 
 ## Behavior
 
-The backend uses the neighbor search and the step of ndt_omp in Autoware: all voxels whose mean is within the resolution of a point, and no line search. The scores follow the definitions of ndt_omp, but the GPU computes with other rounding. So the results are close to the results of the backend `omp`, and they are not bit-identical.
+The backend uses the neighbor search and the step of ndt_omp in Autoware: all voxels whose mean is within the resolution of a point, and no line search. The scores follow the definitions of ndt_omp, but the GPU computes with other rounding. So the results are close to the results of the backend `ndt_omp`, and they are not bit-identical.
 
 The parameter `ndt.num_threads` has no effect on the GPU.
 
@@ -48,7 +48,7 @@ The map work follows the rules of the interface:
 
 ## Tests
 
-`test_ndt_cuda_backend` loads the backends `ndt_cuda` and `omp` with pluginlib. It compares their alignment results and scores, and it tests the copies, the empty copy and a map update in a second thread. Without a CUDA device, the tests are skipped.
+`test_ndt_cuda_backend` loads the backends `ndt_cuda` and `ndt_omp` with pluginlib. It compares their alignment results and scores, and it tests the copies, the empty copy and a map update in a second thread. Without a CUDA device, the tests are skipped.
 
 ## License
 
