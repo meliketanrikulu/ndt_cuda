@@ -18,6 +18,19 @@ class MultiGridNormalDistributionsTransform
 {
 public:
   MultiGridNormalDistributionsTransform() { this->setUseAutowareCovariance(true); }
+
+  // Newer Autoware asks whether map tiles are loaded.
+  bool hasTarget() const { return !this->getCurrentMapIDs().empty(); }
+
+  // Newer Autoware passes the scan to align() instead of calling setInputSource().
+  using ndt_cuda::MultiGridNormalDistributionsTransformCUDA<PointSource, PointTarget>::align;
+  void align(
+    pcl::PointCloud<PointSource> & output, const Eigen::Matrix4f & guess,
+    const typename pcl::PointCloud<PointSource>::ConstPtr & source)
+  {
+    this->setInputSource(source);
+    this->align(output, guess);
+  }
 };
 }  // namespace pclomp
 
