@@ -1,0 +1,5 @@
+<library path="ndt_cuda_autoware_backend">
+  <class name="ndt_cuda" type="ndt_cuda_autoware_backend::NdtCudaBackend" base_class_type="autoware::ndt_scan_matcher::NdtBackend">
+    <description>NDT on an NVIDIA GPU with CUDA (ndt_cuda).</description>
+  </class>
+</library>
