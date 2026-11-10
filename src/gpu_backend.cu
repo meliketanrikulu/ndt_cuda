@@ -430,6 +430,7 @@ bool GpuBackend::shareTarget(const GpuBackend& other) {
   if (o.device != m.device) {
     return false;
   }
+  DeviceGuard guard(m.device);
   m.target_buffers = o.target_buffers;
   m.num_voxels = o.num_voxels;
   m.grid = o.grid;
