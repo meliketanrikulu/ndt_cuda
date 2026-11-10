@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ndt_cuda_autoware_backend</name>
+  <version>0.1.0</version>
+  <description>The NDT backend "ndt_cuda" for autoware_ndt_scan_matcher: NDT scan matching on an NVIDIA GPU with ndt_cuda.</description>
+  <maintainer email="mfc@autoware.org">Mete Fatih Cırıt</maintainer>
+  <license>Apache License 2.0</license>
+
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+  <buildtool_depend>autoware_cmake</buildtool_depend>
+
+  <depend>autoware_ndt_scan_matcher_common</depend>
+  <depend>ndt_cuda</depend>
+  <depend>pluginlib</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>autoware_lint_common</test_depend>
+  <test_depend>autoware_ndt_scan_matcher</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

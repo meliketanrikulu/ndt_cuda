@@ -1,5 +1,7 @@
 # Using ndt_cuda in Autoware
 
+For Autoware Core versions with the NDT backend interface (`autoware_ndt_scan_matcher_common`), use the package [`ndt_cuda_autoware_backend`](../../ndt_cuda_autoware_backend). It needs no change to Autoware. The script below is for older versions.
+
 `apply.sh` makes Autoware's `autoware_ndt_scan_matcher` use ndt_cuda on the GPU. The node, its topics, parameters and launch files stay the same. It needs Autoware 1.8.0 or later (`autoware_core` 1.8.0 or later) and was tested with Autoware 2.0.0 (`autoware_core` 1.10.0); see the [Autoware benchmark](../../docs/autoware_benchmark.md). On older versions `apply.sh` stops without changing anything.
 
 ```bash

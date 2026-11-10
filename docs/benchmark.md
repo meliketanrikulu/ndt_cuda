@@ -30,8 +30,8 @@ The only real data is the pair of LiDAR scans from the ndt_omp repository, also 
 
 | File | Raw points | After 0.1 m downsampling | Used as |
 | --- | --- | --- | --- |
-| `data/251370668.pcd` | 69088 | 15772 | Target (map) |
-| `data/251371071.pcd` | 69792 | 15950 | Source (scan) |
+| `ndt_cuda/data/251370668.pcd` | 69088 | 15772 | Target (map) |
+| `ndt_cuda/data/251371071.pcd` | 69792 | 15950 | Source (scan) |
 
 The larger clouds are synthetic. They were made by repeating the downsampled points with Gaussian noise (5 mm standard deviation) added to each axis:
 
@@ -181,8 +181,8 @@ The GPU memory and utilization section was measured with the same library code a
 `ndt_cuda_benchmark` compares both implementations on the sample data or on your own clouds:
 
 ```bash
-cmake -B build -DNDT_CUDA_BUILD_BENCHMARK=ON && cmake --build build -j
-./build/ndt_cuda_benchmark                              # data/*.pcd, all search methods
+cmake -S ndt_cuda -B build -DNDT_CUDA_BUILD_BENCHMARK=ON && cmake --build build -j
+./build/ndt_cuda_benchmark                              # ndt_cuda/data/*.pcd, all search methods
 ./build/ndt_cuda_benchmark target.pcd source.pcd 2.0    # your own clouds and resolution
 ```
 

@@ -20,4 +20,4 @@ RUN . /opt/ros/humble/setup.sh \
  && colcon test --packages-select ndt_cuda --event-handlers console_direct+ \
  && colcon test-result --verbose
 
-CMD ["bash", "-c", ". /ros2_ws/install/setup.sh && /ros2_ws/install/ndt_cuda/lib/ndt_cuda/ndt_cuda_align /ros2_ws/src/ndt_cuda/data/251370668.pcd /ros2_ws/src/ndt_cuda/data/251371071.pcd"]
+CMD ["bash", "-c", ". /ros2_ws/install/setup.sh && /ros2_ws/install/ndt_cuda/lib/ndt_cuda/ndt_cuda_align /ros2_ws/src/ndt_cuda/ndt_cuda/data/251370668.pcd /ros2_ws/src/ndt_cuda/ndt_cuda/data/251371071.pcd"]
